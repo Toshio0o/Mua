@@ -21,24 +21,24 @@
 
 ---
 
-## 产品原型
+## 产品界面截图
 
-浅灰背景、白色卡片、蓝紫强调色，并支持跟随系统、浅色和深色主题。快捷创作和无限画布均已按 Mua 当前界面更新。
+以下截图来自当前运行中的 Mua 页面。账号截图已遮挡账号备注、邮箱、账号 ID、额度和会话信息。
 
 <table>
   <tr>
     <td colspan="2" align="center">
-      <img src="docs/prototypes/create.png" alt="快捷创作" width="100%"><br>
+      <img src="docs/prototypes/create.jpg" alt="Mua 快捷创作页面截图" width="100%"><br>
       <b>快捷创作</b> · 项目栏 + 任务网格 + 底部 WORKBENCH（提示词 / 参考画面 / 时长 / 比例 / Params / Queue / Generate）
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
-      <img src="docs/prototypes/canvas.png" alt="无限画布" width="100%"><br>
+      <img src="docs/prototypes/canvas.jpg" alt="Mua 无限画布页面截图" width="100%"><br>
       <b>无限画布</b> · 点状网格、玻璃节点、悬浮生成条、小地图
     </td>
     <td width="50%" align="center">
-      <img src="docs/prototypes/accounts.png" alt="muse 导入" width="100%"><br>
+      <img src="docs/prototypes/accounts.jpg" alt="Mua 账号导入页面截图，账号信息已遮挡" width="100%"><br>
       <b>muse 导入</b> · 账号卡片 + 周额度 + 右侧一键绑定流程
     </td>
   </tr>
