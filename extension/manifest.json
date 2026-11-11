@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Mua 账号绑定",
+  "version": "1.0.1",
+  "description": "在已登录 muse.ai 的浏览器里，一键把账号绑定到 Mua，无需手动复制 Cookie。",
+  "permissions": ["cookies", "storage", "activeTab"],
+  "host_permissions": [
+    "https://muse.ai/*",
+    "https://*.muse.ai/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "绑定 muse.ai 账号"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://127.0.0.1/*", "http://localhost/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

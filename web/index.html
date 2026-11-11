@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#F3F4F8" />
+    <script>
+      (function () {
+        var mode = localStorage.getItem('xm_theme') || 'system';
+        if (mode !== 'light' && mode !== 'dark' && mode !== 'system') mode = 'system';
+        var dark = mode === 'dark' || (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = mode;
+        document.documentElement.dataset.resolved = dark ? 'dark' : 'light';
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      })();
+    </script>
+    <title>Mua · AI 图片与视频创作</title>
+
+    <!-- 字体自托管：Baloo 2（标题）+ JetBrains Mono（数据），离线可用 -->
+    <link rel="stylesheet" href="/fonts/fonts.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
