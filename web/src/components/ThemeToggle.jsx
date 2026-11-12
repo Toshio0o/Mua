@@ -38,7 +38,8 @@ export default function ThemeToggle({ compact = false, drop = 'up' }) {
       </button>
       {open && (
         <div className={clsx(
-          'absolute left-1/2 z-40 w-[132px] -translate-x-1/2 rounded-2xl border border-ink-600 bg-ink-800 p-1.5 shadow-xl',
+          'absolute z-40 w-[132px] rounded-2xl border border-ink-600 bg-ink-800 p-1.5 shadow-xl',
+          'left-full ml-2',
           drop === 'down' ? 'top-11' : 'bottom-11'
         )}>
           {OPTIONS.map(([k, label, ItemIcon]) => (

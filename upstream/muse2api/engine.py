@@ -1498,11 +1498,20 @@ class MuseEngine:
 
     def chat_stream(self, cookies: dict, prompt: str, expires: dict | None = None,
                     timeout: int | None = None, account_id: str | None = None,
-                    stop_event=None):
-        """发一条消息，流式 yield 增量文本。"""
+                    stop_event=None, reference_files: list[str] | None = None):
+        """发一条消息，可先附加图片或 Muse 支持的文档。"""
         timeout = int(timeout or getattr(self.cfg, "chat_timeout", 300))
         self.ensure_page(cookies, expires, account_id=account_id)
         self.reset_thread(for_chat=True)
+        upload = self._attach_images(reference_files) if reference_files else None
+        try:
+            yield from self._chat_stream_ready(prompt, timeout, stop_event)
+        finally:
+            if upload:
+                shutil.rmtree(upload["dir"], ignore_errors=True)
+
+    def _chat_stream_ready(self, prompt: str, timeout: int, stop_event=None):
+        """发一条消息，流式 yield 增量文本。"""
         base_agent, base_text, _ = self._poll_chat()
         self._send(prompt)
 

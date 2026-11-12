@@ -90,36 +90,40 @@ engine.proxy_resolver = lambda aid: (store.get_account(aid) or {}).get("proxy")
 
 
 class ConcurrencyLock:
-    """多账号并发调度锁。
-    由 CFG.max_concurrency 限制最大并发槽位；
+    """共享 Muse 浏览器任务锁，可在运行时调整并发槽位；
     同时提供与标准 Lock 兼容的 acquire / release / locked 接口，
     确保向下兼容历史单锁断言与管理端操作。"""
     def __init__(self, limit: int = 2):
         self.limit = max(1, limit)
-        self._sem = threading.Semaphore(self.limit)
-        self._count_lock = threading.Lock()
+        self._condition = threading.Condition()
         self._active_count = 0
 
     def acquire(self, blocking: bool = True, timeout: float | None = -1) -> bool:
-        if timeout is None:
-            timeout = -1
-        if timeout < 0:
-            ok = self._sem.acquire(blocking=blocking)
-        else:
-            ok = self._sem.acquire(blocking=blocking, timeout=timeout)
-        if ok:
-            with self._count_lock:
-                self._active_count += 1
-        return ok
+        deadline = None if timeout is None or timeout < 0 else time.monotonic() + timeout
+        with self._condition:
+            while self._active_count >= self.limit:
+                if not blocking:
+                    return False
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    return False
+                self._condition.wait(remaining)
+            self._active_count += 1
+            return True
 
     def release(self):
-        with self._count_lock:
+        with self._condition:
             if self._active_count > 0:
                 self._active_count -= 1
-        self._sem.release()
+            self._condition.notify_all()
+
+    def set_limit(self, limit: int):
+        with self._condition:
+            self.limit = max(1, min(8, int(limit)))
+            self._condition.notify_all()
 
     def locked(self) -> bool:
-        with self._count_lock:
+        with self._condition:
             return self._active_count > 0
 
     def __enter__(self):
@@ -131,7 +135,7 @@ class ConcurrencyLock:
 
 
 class AccountPoolManager:
-    """账号并发冲突管理器：确保同一账号不会同时被两个并发任务操作，多账号则并行执行。"""
+    """账号租约管理器：确保同一账号不会同时被多个任务操作。"""
     def __init__(self, store_instance):
         self.store = store_instance
         self.busy_accounts: set[str] = set()
@@ -162,14 +166,16 @@ class AccountPoolManager:
                         force_rotate=force_rotate,
                         exclude_ids=self.busy_accounts,
                         record_use=record_use,
+                        generation_only=True,
                     )
                     if acc:
                         self.busy_accounts.add(acc["id"])
                         return acc
 
-                live = [a for a in self.store.accounts if a.get("enabled", True) and a.get("cookies")]
+                live = [a for a in self.store.accounts if a.get("enabled", True)
+                        and a.get("generation_enabled", True) and a.get("cookies")]
                 if not live:
-                    raise MuseAuthError("没有可用账号，请先在管理页面导入 cookie")
+                    raise MuseAuthError("没有参与生成调度的可用账号，请到账号管理中至少选择一个")
 
                 self.cond.wait(timeout=min(remaining, 0.5))
 
@@ -181,7 +187,17 @@ class AccountPoolManager:
             self.cond.notify_all()
 
 
-GEN_LOCK = ConcurrencyLock(limit=CFG.max_concurrency)
+# Muse UI is a shared browser session. Default to one queued chat or media task at a
+# time; deployments can explicitly raise MUSE2API_CONCURRENCY when their setup allows it.
+def _load_scheduler_limit() -> int:
+    try:
+        with open(CFG.scheduler_file, encoding="utf-8") as f:
+            return max(1, min(8, int(json.load(f).get("max_concurrency", CFG.max_concurrency))))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return max(1, min(8, CFG.max_concurrency))
+
+
+GEN_LOCK = ConcurrencyLock(limit=_load_scheduler_limit())
 ACCOUNT_POOL = AccountPoolManager(store)
 IMAGE_TASK_LOCK = threading.Lock()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -367,7 +383,8 @@ def _renew_and_persist(acc_id: str, wake_vm: bool = True, force: bool = False) -
 
 
 def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
-                     timeout: int, account_id: str | None):
+                     timeout: int, account_id: str | None,
+                     reference_files: list[str] | None = None):
     """在独立线程中执行 chat_stream 并持有 GEN_LOCK，通过 Queue 往外吐。
     无论下游客户端何时断连、异常或超时，stop_event + finally 块保证 100% 立即释放 GEN_LOCK，绝不死锁。
     若首字前遇到单账号 VM 卡死或会话异常，自动切换下一个健康账号重试一次。"""
@@ -420,7 +437,8 @@ def safe_chat_stream(cookies: dict, prompt: str, expires: dict | None,
                         engine.start()
                         for chunk in engine.chat_stream(
                             cur_cookies, prompt, cur_exp, timeout,
-                            account_id=cur_id, stop_event=stop_event
+                            account_id=cur_id, stop_event=stop_event,
+                            reference_files=reference_files
                         ):
                             yielded = True
                             q.put(("data", chunk))
@@ -526,6 +544,7 @@ class ChatRequest(BaseModel):
     max_tokens: int | None = None
     timeout: int | None = None
     prompt: str | None = None       # 兼容把 prompt 直接放顶层的客户端
+    images: list | None = None      # 图片或 Muse 支持的文档附件
     # 下面这些声明出来只是为了「能读到」，muse.ai 端不做对应处理
     tools: list | None = None
     tool_choice: object | None = None
@@ -606,7 +625,12 @@ class AccountRequest(BaseModel):
 class AccountPatch(BaseModel):
     label: str | None = None
     enabled: bool | None = None
+    generation_enabled: bool | None = None
     proxy: AccountProxy | None = None
+
+
+class SchedulerPatch(BaseModel):
+    max_concurrency: int = Field(ge=1, le=8)
 
 
 class ProxyTestRequest(BaseModel):
@@ -956,24 +980,36 @@ def build_video_prompt(r: VideoRequest, kinds: list[str] | None = None) -> str:
     refs = _video_references(r)
     has_ref = bool(refs)
     kinds = kinds or ["image"] * len(refs)
+    explicit_first_frame = bool(re.search(
+        r"首帧|第一帧|起始帧|开场画面|开始画面|以图(?:片)?(?:作为|作|为)?首帧|"
+        r"从参考图开始|first\s+frame|opening\s+frame|start\s+frame",
+        user_prompt, re.IGNORECASE))
     if any(k != "image" for k in kinds):
         # 不再默认「第一张图作起始画面」：实测会把模型拉回图片场景、忽略参考视频
         reference_instruction = (
             f"基于我本次上传的参考素材（{_describe_kinds(kinds)}）生成视频"
             f"（{_reference_legend(kinds)}；只使用本次上传的这些附件，严禁使用历史素材；"
             "各附件的用途以下面的描述为准）")
+    elif explicit_first_frame:
+        reference_instruction = (
+            f"基于我本次上传的 {len(refs)} 张参考图片生成视频（{_reference_legend(kinds)}；"
+            "仅按用户提示词明确指定的图片和用途安排首帧；严禁自行把未指定的参考图设为首帧，"
+            "严禁使用历史图片或其他图像）")
     elif len(refs) > 1 and _REFERENCE_TOKEN.search(user_prompt):
         reference_instruction = (
             f"基于我本次上传的 {len(refs)} 张参考图片生成视频（{_reference_legend(kinds)}；"
-            "各图片的用途以下面的描述为准，未说明时以第一张作为主要起始画面；严禁使用历史图片或其他图像）")
+            "各图片的用途严格以下面的用户提示词为准；未指定首帧时，所有图片仅作为人物、主体、场景或风格参考，"
+            "严禁自行把第一张设为首帧，严禁使用历史图片或其他图像）")
     elif len(refs) > 1:
         reference_instruction = (
-            f"基于我本次上传的 {len(refs)} 张参考图片生成视频（以第一张作为主要起始画面，"
-            "其余图片作为主体、场景与风格参考，严禁使用历史图片或其他图像）")
+            f"基于我本次上传的 {len(refs)} 张参考图片生成视频（所有图片作为人物形象、主体、场景或风格参考；"
+            "首帧和镜头内容完全按用户提示词决定，提示词未指定首帧时不得默认使用第一张图片作为首帧；"
+            "严禁使用历史图片或其他图像）")
     else:
         reference_instruction = (
-            "基于我本次上传的参考图片附件作为第一帧参考图（严禁使用历史图片或任何其他图像，"
-            "必须严格以我当前刚刚上传并附带在此处的这张图片为起始帧）")
+            "将我本次上传的参考图片用于保持人物形象、主体特征、场景或风格一致；"
+            "首帧和镜头内容严格按用户提示词决定，提示词未明确要求以此图开场时不得把它设为首帧；"
+            "严禁使用历史图片或任何其他图像")
 
     gen_word = "图生视频" if all(k == "image" for k in kinds) else "视频"
     is_vertical = any(k in ar or k in sz for k in ("9:16", "9/16", "portrait", "竖屏", "720x1280", "1080x1920"))
@@ -1585,6 +1621,7 @@ async def chat_completions(req: ChatRequest, _=Depends(auth)):
     prompt = build_chat_prompt(req.messages) or (req.prompt or "").strip()
     if not prompt:
         raise HTTPException(400, "messages 为空")
+    reference_files = _prepare_reference_images(req.images or [])
 
     # 工具调用协议默认不注入 —— 实测 muse.ai 的助手会明确拒绝输出"伪工具调用"，
     # 注入反而污染正常回答；详见 config.py 的 tool_protocol 注释。
@@ -1596,7 +1633,7 @@ async def chat_completions(req: ChatRequest, _=Depends(auth)):
 
     model = resolve_model(req.model, default="muse-spark")
     timeout = int(req.timeout or CFG.chat_timeout)
-    acc = store.pick_account(rotate=True)
+    acc = store.pick_account(rotate=True, generation_only=True)
     if not acc:
         raise HTTPException(400, "没有可用账号，请先在管理页面导入 cookie")
 
@@ -1621,7 +1658,8 @@ async def chat_completions(req: ChatRequest, _=Depends(auth)):
                 # 握手建立瞬间立即发送 role: assistant 首包，让下游客户端秒级捕获光标
                 yield _sse(_chat_chunk(cid, created, model, {"role": "assistant"}))
 
-                stream_gen = safe_chat_stream(cookies, prompt, expires, timeout, account_id=acc_id)
+                stream_gen = safe_chat_stream(cookies, prompt, expires, timeout,
+                                              account_id=acc_id, reference_files=reference_files)
                 if not tool_note:
                     for chunk in stream_gen:
                         for piece in _pace_text(chunk):
@@ -1683,7 +1721,8 @@ async def chat_completions(req: ChatRequest, _=Depends(auth)):
         return StreamingResponse(sync_stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
     def run() -> str:
-        return "".join(safe_chat_stream(cookies, prompt, expires, timeout, account_id=acc_id))
+        return "".join(safe_chat_stream(cookies, prompt, expires, timeout,
+                                        account_id=acc_id, reference_files=reference_files))
 
     try:
         text = await asyncio.to_thread(run)
@@ -1758,7 +1797,7 @@ async def responses_api(req: ResponsesRequest, _=Depends(auth)):
 
     model = resolve_model(req.model, default="muse-spark")
     timeout = int(req.timeout or CFG.chat_timeout)
-    acc = store.pick_account(rotate=True)
+    acc = store.pick_account(rotate=True, generation_only=True)
     if not acc:
         raise HTTPException(400, "没有可用账号，请先在管理页面导入 cookie")
 
@@ -1857,6 +1896,7 @@ def admin_status(_=Depends(auth)):
         "config": {"site": CFG.site_url, "cdp_port": CFG.cdp_port,
                    "image_timeout": CFG.image_timeout,
                    "video_timeout": CFG.video_timeout,
+                   "max_concurrency": GEN_LOCK.limit,
                    "host": CFG.host, "port": CFG.port,
                    "public_base": base},
     }
@@ -1866,6 +1906,26 @@ def admin_status(_=Depends(auth)):
 @app.get("/admin/accounts")
 def list_accounts(_=Depends(auth)):
     return {"accounts": store.list_accounts(), "stats": store.stats()}
+
+
+@app.get("/admin/scheduler")
+def get_scheduler(_=Depends(auth)):
+    return {"max_concurrency": GEN_LOCK.limit}
+
+
+@app.patch("/admin/scheduler")
+def patch_scheduler(req: SchedulerPatch, _=Depends(auth)):
+    limit = max(1, min(8, req.max_concurrency))
+    try:
+        os.makedirs(CFG.data_dir, exist_ok=True)
+        temporary = CFG.scheduler_file + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as f:
+            json.dump({"max_concurrency": limit}, f)
+        os.replace(temporary, CFG.scheduler_file)
+    except OSError as exc:
+        raise HTTPException(500, f"并发设置保存失败：{exc}") from exc
+    GEN_LOCK.set_limit(limit)
+    return get_scheduler()
 
 
 @app.post("/admin/accounts")
@@ -1925,7 +1985,13 @@ def patch_account(aid: str, req: AccountPatch, _=Depends(auth)):
         existing = store.get_account(aid)
         if not existing:
             raise HTTPException(404, "账号不存在")
-        changes = {"label": req.label, "enabled": req.enabled}
+        if req.generation_enabled is False:
+            usable = [a for a in store.accounts if a.get("enabled", True)
+                      and a.get("generation_enabled", True) and a.get("cookies")]
+            if len(usable) <= 1 and existing.get("generation_enabled", True):
+                raise HTTPException(409, "请至少保留一个参与调度的账号")
+        changes = {"label": req.label, "enabled": req.enabled,
+                   "generation_enabled": req.generation_enabled}
         if "proxy" in req.model_fields_set:
             if aid in ACCOUNT_POOL.busy_accounts:
                 raise HTTPException(409, "账号正在执行任务或检测，请稍后再修改代理")

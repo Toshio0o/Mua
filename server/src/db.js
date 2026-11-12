@@ -109,6 +109,15 @@ CREATE TABLE IF NOT EXISTS canvases (
 CREATE INDEX IF NOT EXISTS idx_canvases_project ON canvases(project_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_canvases_user ON canvases(user_id, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS canvas_conversations (
+  user_id       TEXT NOT NULL,
+  canvas_id     TEXT NOT NULL,
+  messages_json TEXT NOT NULL DEFAULT '[]',
+  updated_at    INTEGER NOT NULL,
+  PRIMARY KEY(user_id, canvas_id),
+  FOREIGN KEY(canvas_id) REFERENCES canvases(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS bind_codes (
   code       TEXT PRIMARY KEY,
   user_id    TEXT NOT NULL,

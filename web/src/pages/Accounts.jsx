@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Plus, Trash2, RefreshCw, ShieldCheck, KeyRound, ClipboardPaste, ExternalLink, Info,
   Link2, Copy, CheckCircle2, Loader2, HelpCircle, Search, Activity, Download, Clipboard, Lock,
+  SlidersHorizontal, Pencil,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { api, fmtAgo } from '../lib/api.js';
@@ -29,6 +30,13 @@ export default function Accounts() {
   const [guide, setGuide] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all');
   const [q, setQ] = useState('');
+  const [scheduler, setScheduler] = useState({ maxConcurrency: 8 });
+  const [schedulerBusy, setSchedulerBusy] = useState(false);
+  const [batchAction, setBatchAction] = useState(null);
+  const [batchProgress, setBatchProgress] = useState(null);
+  const [editingAccount, setEditingAccount] = useState(null);
+  const [editLabel, setEditLabel] = useState('');
+  const [renameBusy, setRenameBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -36,6 +44,7 @@ export default function Accounts() {
       const out = await api.accounts();
       setList(out.accounts);
       setSummary(out.summary || null);
+      setScheduler(out.scheduler || { maxConcurrency: 8 });
       setUpstreamUp(out.upstreamUp !== false);
     } catch (e) {
       toast(e.message, 'error');
@@ -72,6 +81,54 @@ export default function Accounts() {
     }
   };
 
+  const runBatch = async (kind) => {
+    if (batchAction || busyId) return;
+    const targets = list.filter((account) => account.upstreamId && !['missing', 'unavailable'].includes(account.status));
+    if (!targets.length) return toast('没有可处理的账号', 'error');
+    setBatchAction(kind);
+    const failures = [];
+    let completed = 0;
+    try {
+      for (let index = 0; index < targets.length; index += 1) {
+        const account = targets[index];
+        setBatchProgress({ current: index + 1, total: targets.length, label: account.label });
+        try {
+          if (kind === 'test') await api.testAccount(account.id);
+          else await api.keepaliveAccount(account.id);
+          completed += 1;
+        } catch (error) {
+          failures.push(`${account.label}：${error.message}`);
+        }
+      }
+      await load();
+      if (failures.length) {
+        toast(`${kind === 'test' ? '检测' : '保活'}完成 ${completed}/${targets.length}，失败 ${failures.length} 个：${failures[0]}`, 'error');
+      } else {
+        toast(`${kind === 'test' ? '一键检测' : '一键保活'}完成，共处理 ${completed} 个账号`, 'ok');
+      }
+    } finally {
+      setBatchAction(null);
+      setBatchProgress(null);
+    }
+  };
+
+  const saveLabel = async (event) => {
+    event.preventDefault();
+    const label = editLabel.trim();
+    if (!editingAccount || !label || label.length > 40) return;
+    setRenameBusy(true);
+    try {
+      await api.renameAccount(editingAccount.id, label);
+      setList((accounts) => accounts.map((account) => account.id === editingAccount.id ? { ...account, label } : account));
+      setEditingAccount(null);
+      toast('账号备注已更新', 'ok');
+    } catch (error) {
+      toast(error.message, 'error');
+    } finally {
+      setRenameBusy(false);
+    }
+  };
+
   const remove = async (acc) => {
     if (!confirm(`删除账号「${acc.label}」？`)) return;
     setBusyId(acc.id);
@@ -83,6 +140,32 @@ export default function Accounts() {
       toast(e.message, 'error');
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const toggleGeneration = async (account) => {
+    setBusyId(account.id);
+    try {
+      await api.setAccountGeneration(account.id, !account.generationEnabled);
+      await load();
+      toast(account.generationEnabled ? '该账号已从生成轮转中排除' : '该账号已加入生成轮转', 'ok');
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const changeConcurrency = async (value) => {
+    setSchedulerBusy(true);
+    try {
+      const out = await api.setSchedulerConcurrency(Number(value));
+      setScheduler(out);
+      toast(`同时运行任务数已设为 ${out.maxConcurrency}`, 'ok');
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setSchedulerBusy(false);
     }
   };
 
@@ -141,9 +224,37 @@ export default function Accounts() {
             {' '}登录 → <kbd className="rounded bg-[#eef0f6] px-1.5 py-0.5 text-[11px] text-[#171a24]">F12</kbd> → <b className="text-mist-200">Application → Cookies → https://muse.ai</b> →
             复制整段（至少含 <code className="rounded bg-[#eef0f6] px-1 text-[11px] text-[#171a24]">hatch_sess</code>）。
           </p>
-          <p className="text-ink-500">会话约 48 小时有效，过期后重新绑定即可。多个账号可以重复绑定，池子自动轮转。</p>
+          <p className="text-ink-500">会话约 48 小时有效，过期后重新绑定即可。可在账号卡片中选择参与调度的账号，每条请求只使用其中一个。</p>
         </div>
       )}
+
+      <section className="card mb-5 flex flex-wrap items-center justify-between gap-4 px-4 py-3.5">
+        <div className="min-w-0">
+          <h2 className="flex items-center gap-2 text-[13px] font-semibold text-[#252b3c]">
+            <SlidersHorizontal size={14} className="text-brand-500" /> 账号调度
+          </h2>
+          <p className="mt-1 text-[11.5px] leading-5 text-mist-400">
+            每条生成或对话请求只分配给一个已勾选账号。并发数是同时运行上限，实际并行数还受已勾选账号数量限制。
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2 text-[12px] text-mist-300">
+          <span>并发任务</span>
+          {user?.role === 'admin' ? (
+            <select
+              value={scheduler.maxConcurrency}
+              disabled={schedulerBusy || !upstreamUp}
+              onChange={(event) => changeConcurrency(event.target.value)}
+              className="h-9 rounded-lg border border-[#e6eaf2] bg-white px-3 font-mono text-[12px] text-[#171a24] outline-none disabled:opacity-50"
+              aria-label="同时运行任务数"
+            >
+              {Array.from({ length: 8 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          ) : (
+            <b className="font-mono text-[#171a24]">{scheduler.maxConcurrency}</b>
+          )}
+          <span className="text-mist-400">个</span>
+        </div>
+      </section>
 
       <div className="sticky top-3 z-20 mb-5 flex flex-wrap items-center justify-center gap-2">
         <div className="capsule-bar">
@@ -162,6 +273,22 @@ export default function Accounts() {
           ))}
           <button onClick={load} className="!text-mist-400 hover:!text-brand-500">
             <RefreshCw size={12} className={clsx('inline', loading && 'animate-spin')} /> 刷新
+          </button>
+          <button
+            onClick={() => runBatch('test')}
+            disabled={!upstreamUp || !!batchAction || !!busyId || !list.some((account) => account.upstreamId && !['missing', 'unavailable'].includes(account.status))}
+            className="rounded-full px-3 py-1.5 text-[12px] text-mist-300 transition hover:bg-[#eef0f6] hover:text-[#171a24] disabled:opacity-40"
+            title="逐个检测当前账号池中的可用账号"
+          >
+            {batchAction === 'test' ? <><Loader2 size={12} className="mr-1 inline animate-spin" />{batchProgress?.current || 0}/{batchProgress?.total || 0} 检测中</> : <><ShieldCheck size={12} className="mr-1 inline" />一键检测</>}
+          </button>
+          <button
+            onClick={() => runBatch('keepalive')}
+            disabled={!upstreamUp || !!batchAction || !!busyId || !list.some((account) => account.upstreamId && !['missing', 'unavailable'].includes(account.status))}
+            className="rounded-full px-3 py-1.5 text-[12px] text-mist-300 transition hover:bg-[#eef0f6] hover:text-[#171a24] disabled:opacity-40"
+            title="逐个保活当前账号池中的可用账号"
+          >
+            {batchAction === 'keepalive' ? <><Loader2 size={12} className="mr-1 inline animate-spin" />{batchProgress?.current || 0}/{batchProgress?.total || 0} 保活中</> : <><Activity size={12} className="mr-1 inline" />一键保活</>}
           </button>
         </div>
         <label className="capsule-bar gap-0 px-3">
@@ -215,17 +342,20 @@ export default function Accounts() {
             <AccountCard
               key={a.id}
               a={a}
-              busy={busyId === a.id}
+              busy={busyId === a.id || !!batchAction}
               onTest={() => act(a.id, api.testAccount, '检测完成')}
               onKeepalive={() => act(a.id, api.keepaliveAccount, '已尝试续期')}
               onRemove={() => remove(a)}
               onQuota={() => refreshQuota(a)}
+              onToggleGeneration={() => toggleGeneration(a)}
+              canRename={user?.role === 'admin' || a.mine}
+              onRename={() => { setEditingAccount(a); setEditLabel(a.label || ''); }}
             />
           ))}
         </div>
       )}
 
-      <p className="mt-5 text-center text-[11.5px] text-ink-500">共 {list.length} 个账户 · 多账号自动轮转</p>
+      <p className="mt-5 text-center text-[11.5px] text-ink-500">共 {list.length} 个账户 · 每条请求只使用一个参与调度的账号</p>
       </div>
       </div>
 
@@ -240,6 +370,18 @@ export default function Accounts() {
         onClose={() => setBindOpen(false)}
         onDone={load}
       />
+
+      <Modal open={!!editingAccount} onClose={() => !renameBusy && setEditingAccount(null)} title="修改账号备注">
+        <form onSubmit={saveLabel} className="space-y-4">
+          <Field label="备注名" hint="1 到 40 个字符，保存后同步到 Muse 上游">
+            <Input autoFocus maxLength={40} value={editLabel} onChange={(event) => setEditLabel(event.target.value)} placeholder="例如：主号、老婆的账号" />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="soft" onClick={() => setEditingAccount(null)} disabled={renameBusy}>取消</Button>
+            <Button type="submit" loading={renameBusy} disabled={!editLabel.trim()}>保存备注</Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
@@ -254,7 +396,7 @@ const AVATAR_GRADS = [
 ];
 const gradFor = (id = '') => AVATAR_GRADS[[...String(id)].reduce((s, c) => s + c.charCodeAt(0), 0) % AVATAR_GRADS.length];
 
-function AccountCard({ a, busy, onTest, onKeepalive, onRemove, onQuota }) {
+function AccountCard({ a, busy, canRename, onTest, onKeepalive, onRemove, onQuota, onToggleGeneration, onRename }) {
   const st = STATUS[a.status] || STATUS.unknown;
   const expiring = a.expiresAt && a.expiresAt * 1000 - Date.now() < 6 * 3600 * 1000;
   const left = a.quota?.weeklyLeftPct;
@@ -264,10 +406,18 @@ function AccountCard({ a, busy, onTest, onKeepalive, onRemove, onQuota }) {
       <div className="flex items-start gap-3">
         <span className={clsx('h-12 w-12 shrink-0 rounded-full bg-gradient-to-br shadow-inner', gradFor(a.id || a.upstreamId))} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[15px] font-semibold text-[#171a24]" title={a.label}>{a.label}</p>
+          <div className="flex min-w-0 items-center gap-1">
+            <p className="truncate text-[15px] font-semibold text-[#171a24]" title={a.label}>{a.label}</p>
+            {canRename && (
+              <button type="button" onClick={onRename} disabled={busy} title="修改备注名" aria-label={`修改${a.label}备注`} className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-mist-400 transition hover:bg-[#eef0f6] hover:text-brand-500 disabled:opacity-40">
+                <Pencil size={12} />
+              </button>
+            )}
+          </div>
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
             <Badge tone={st.tone} dot>{st.label}</Badge>
             {a.shared && <Badge tone="brand">公共池</Badge>}
+            <Badge tone={a.generationEnabled ? 'ok' : 'neutral'}>{a.generationEnabled ? '参与调度' : '已排除'}</Badge>
           </div>
         </div>
         <span className="font-mono text-[10px] text-ink-500" title={a.upstreamId}>
@@ -324,6 +474,18 @@ function AccountCard({ a, busy, onTest, onKeepalive, onRemove, onQuota }) {
       </div>
 
       <div className="mt-4 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onToggleGeneration}
+          disabled={busy || a.status === 'missing' || a.status === 'unavailable'}
+          className={clsx(
+            'mr-auto inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] transition disabled:opacity-40',
+            a.generationEnabled ? 'border-brand-200 bg-brand-50 text-brand-700' : 'border-[#e6eaf2] text-mist-400 hover:text-[#30364a]'
+          )}
+        >
+          <span className={clsx('h-2 w-2 rounded-full', a.generationEnabled ? 'bg-brand-500' : 'bg-mist-300')} />
+          {a.generationEnabled ? '移出调度' : '加入调度'}
+        </button>
         <Button variant="soft" size="sm" loading={busy} onClick={onTest}>
           {!busy && <ShieldCheck size={13} />} 检测
         </Button>

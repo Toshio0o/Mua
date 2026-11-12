@@ -60,7 +60,7 @@ export default function Layout() {
   return (
     <div className="relative flex h-full overflow-hidden bg-ink-900">
       {/* ---------------- 侧边栏 ---------------- */}
-      <aside className={clsx('frost relative z-20 flex shrink-0 flex-col border-r border-ink-600 py-4 transition-[width] duration-200', sidebarOpen ? 'w-[224px]' : 'w-[72px]')}>
+      <aside className={clsx('frost relative z-40 flex shrink-0 flex-col border-r border-ink-600 py-4 transition-[width] duration-200', sidebarOpen ? 'w-[224px]' : 'w-[72px]')}>
         <div className={clsx('flex w-full items-center px-3', sidebarOpen ? 'justify-between' : 'flex-col gap-3')}>
           <div className="group/logo relative z-0 hover:z-50 focus-within:z-50">
             <button
@@ -143,7 +143,7 @@ export default function Layout() {
             {sidebarOpen && <span className="min-w-0 truncate text-[12px] text-mist-300">{user?.name || user?.email}</span>}
           </div>
           <div className={clsx('flex items-center', sidebarOpen ? 'gap-3 px-2' : 'justify-center')}>
-            <ThemeToggle />
+            <ThemeToggle compact={!sidebarOpen} />
             {sidebarOpen && <span className="text-[13px] text-mist-300">主题</span>}
           </div>
           <button

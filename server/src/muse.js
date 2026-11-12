@@ -57,6 +57,14 @@ export async function listAccounts() {
   return { accounts: data?.accounts || [], stats: data?.stats || {} };
 }
 
+export const scheduler = () => call('/admin/scheduler');
+export const updateScheduler = (maxConcurrency) => call('/admin/scheduler', {
+  method: 'PATCH', body: { max_concurrency: maxConcurrency },
+});
+export const updateAccount = (upstreamId, body) => call(`/admin/accounts/${encodeURIComponent(upstreamId)}`, {
+  method: 'PATCH', body,
+});
+
 export async function addAccount({ label, cookie, expires, proxy }) {
   const body = { label };
   if (cookie) body.cookie_header = cookie;

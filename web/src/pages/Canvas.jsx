@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, Type, Image as ImageIcon, Video, Download, Trash2, ZoomIn, ZoomOut, Maximize, Loader2, Sparkles,
-  MousePointer2, ChevronDown, Map as MapIcon, Expand, Upload, Send,
+  MousePointer2, ChevronDown, Map as MapIcon, Expand, Upload, Send, X,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../store/auth.jsx';
 import { useToast } from '../components/ui.jsx';
+import ChatDrawer from '../components/ChatDrawer.jsx';
 
 const NODE_W = 260;
 const NODE_H = 170;
+const VIDEO_CONTROLS_WRAP_WIDTH = 272;
+const MINIMAP_W = 176;
+const MINIMAP_H = 116;
 const IMAGE_SIZES = ['1:1', '3:4', '4:3', '2:3', '3:2', '4:5', '5:4', '9:16', '16:9', '21:9'];
 const VIDEO_SIZES = ['9:16', '16:9', '1:1', '3:4', '4:3', '21:9'];
 const VIDEO_DURATIONS = [5, 6, 8, 10];
@@ -54,7 +59,8 @@ function sends(n) {
 const nodeH = (n) => {
   if (!n) return NODE_H;
   if (n.type === 'text') return n.height || 184;
-  return previewBox(n).height + (sends(n) ? 190 : 86);
+  const wrapsVideoControls = n.type === 'video' && sends(n) && previewBox(n).width < VIDEO_CONTROLS_WRAP_WIDTH;
+  return previewBox(n).height + (sends(n) ? 204 + (wrapsVideoControls ? 40 : 0) : 86) + (n.mediaUrl ? 40 : 0);
 };
 
 function mediaFilesFromList(list) {
@@ -120,6 +126,27 @@ function bezier(x1, y1, x2, y2) {
   return `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
 }
 
+function splitShotReply(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const sections = [];
+  let current = null;
+  let intro = [];
+  const heading = /^(?:#{1,4}\s*)?(?:镜头|分镜|shot)\s*(?:[\d一二三四五六七八九十百零〇两]+)?\s*[:：.、|｜-]?.*$/i;
+  for (const line of lines) {
+    if (heading.test(line.trim())) {
+      if (current) sections.push(current);
+      else if (intro.some((item) => item.trim())) sections.push({ label: '分镜说明', text: intro.join('\n').trim() });
+      current = { label: line.trim().replace(/^#+\s*/, '').slice(0, 40) || `镜头 ${sections.length + 1}`, text: line };
+    } else if (current) {
+      current.text += `\n${line}`;
+    } else {
+      intro.push(line);
+    }
+  }
+  if (current) sections.push(current);
+  return sections.length > 1 && sections.length <= 60 ? sections.map((section) => ({ ...section, text: section.text.trim() })) : [];
+}
+
 export default function Canvas() {
   const { canvasId } = useParams();
   const nav = useNavigate();
@@ -133,6 +160,8 @@ export default function Canvas() {
   const [view, setView] = useState({ x: 0, y: 0, z: 1 });
   const [selected, setSelected] = useState([]);
   const [selectedLink, setSelectedLink] = useState(null);
+  const [previewMedia, setPreviewMedia] = useState(null);
+  const [previewScale, setPreviewScale] = useState(1);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [saved, setSaved] = useState(true);
@@ -155,6 +184,13 @@ export default function Canvas() {
   const hoverRef = useRef(null);
   viewRef.current = view;
   docRef.current = doc;
+
+  useEffect(() => {
+    if (!previewMedia) return undefined;
+    const onKeyDown = (event) => { if (event.key === 'Escape') setPreviewMedia(null); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [previewMedia]);
 
   useEffect(() => {
     let active = true;
@@ -228,20 +264,25 @@ export default function Canvas() {
 
   const onWheel = (e) => {
     e.preventDefault();
-    if (e.ctrlKey) {
-      const rect = viewportRef.current?.getBoundingClientRect();
-      const cx = rect ? e.clientX - rect.left : undefined;
-      const cy = rect ? e.clientY - rect.top : undefined;
-      zoomBy(Math.exp(-e.deltaY * 0.002), cx, cy);
-      return;
-    }
-    setView((current) => ({ ...current, y: current.y - e.deltaY }));
+    if (!e.ctrlKey) return;
+    const rect = viewportRef.current?.getBoundingClientRect();
+    const cx = rect ? e.clientX - rect.left : undefined;
+    const cy = rect ? e.clientY - rect.top : undefined;
+    zoomBy(Math.exp(-e.deltaY * 0.002), cx, cy);
   };
 
   useEffect(() => {
     const handleWheel = (event) => {
       const viewport = viewportRef.current;
       if (!viewport || !viewport.contains(event.target)) return;
+      const textarea = event.target.closest?.('textarea');
+      if (textarea && !event.ctrlKey) {
+        const maxScrollTop = textarea.scrollHeight - textarea.clientHeight;
+        const canScrollTextarea = event.deltaY < 0
+          ? textarea.scrollTop > 0
+          : event.deltaY > 0 && textarea.scrollTop < maxScrollTop;
+        if (maxScrollTop > 1 && canScrollTextarea) return;
+      }
       onWheel(event);
       event.stopPropagation();
     };
@@ -292,14 +333,17 @@ export default function Canvas() {
     if (e.button !== 0) return;
     if (e.target.closest('[data-port], textarea, button, input, select')) return;
     e.stopPropagation();
-    const multi = e.shiftKey;
     setSelectedLink(null);
-    setSelected((sel) => {
-      if (multi) return sel.includes(node.id) ? sel.filter((i) => i !== node.id) : [...sel, node.id];
-      return sel.includes(node.id) ? sel : [node.id];
-    });
+    const alreadySelected = selected.includes(node.id);
+    if (e.shiftKey && alreadySelected) {
+      setSelected((sel) => sel.filter((id) => id !== node.id));
+      return;
+    }
+    const group = e.shiftKey
+      ? [...new Set([...selected, node.id])]
+      : alreadySelected ? selected : [node.id];
+    setSelected(group);
     const origins = {};
-    const group = multi ? [...new Set([...selected, node.id])] : [node.id];
     for (const n of doc.nodes) {
       if (group.includes(n.id)) origins[n.id] = { x: n.x, y: n.y };
     }
@@ -535,10 +579,12 @@ export default function Canvas() {
       id: newId(),
       type,
       intent: extra.intent || (type === 'text' ? 'input' : 'generate'),
-          x: Math.round(center.x - nodeW({ type, intent: extra.intent || (type === 'text' ? 'input' : 'generate'), size: type === 'video' ? '16:9' : '1:1' }) / 2),
+      x: Math.round(center.x - nodeW({ type, intent: extra.intent || (type === 'text' ? 'input' : 'generate'), size: type === 'video' ? '16:9' : '1:1' }) / 2),
       y: Math.round(center.y - 36),
-      text: type === 'text' ? '在这里写下提示词' : '',
+      text: type === 'text' ? (extra.text || '在这里写下提示词') : '',
       label: extra.label || (type === 'text' ? '文本' : type === 'image' ? '制作图片' : '制作视频'),
+      ...(type === 'text' && extra.width ? { width: extra.width } : {}),
+      ...(type === 'text' && extra.height ? { height: extra.height } : {}),
       size: type === 'video' ? '16:9' : '1:1',
       duration: 5,
       status: 'idle',
@@ -548,6 +594,39 @@ export default function Canvas() {
     setSelectedLink(null);
     setMenu(null);
     return n.id;
+  };
+
+  const insertAgentReply = (text, splitShots = false) => {
+    if (!splitShots) {
+      addNode('text', { label: /分镜|镜头|shot\s*\d/i.test(text) ? 'Muse 分镜' : 'Muse 回复', text, width: 440, height: 420 }, centerPoint());
+      toast('Muse 回复已放入画布', 'ok');
+      return;
+    }
+    const sections = splitShotReply(text);
+    if (!sections.length) {
+      toast('没有识别到多个镜头标题，请让 Muse 按“镜头 1、镜头 2”分段输出', 'error');
+      return;
+    }
+    const center = centerPoint();
+    const columns = Math.min(3, sections.length);
+    const gapX = 380;
+    const gapY = 330;
+    const rows = Math.ceil(sections.length / columns);
+    const nodes = sections.map((section, index) => {
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+      return {
+        id: newId(), type: 'text', intent: 'input',
+        x: Math.round(center.x + column * gapX - ((columns - 1) * gapX) / 2 - 170),
+        y: Math.round(center.y + row * gapY - ((rows - 1) * gapY) / 2 - 140),
+        width: 340, height: 280, text: section.text,
+        label: section.label, size: '1:1', duration: 5, status: 'idle',
+      };
+    });
+    setDoc((current) => ({ ...current, nodes: [...current.nodes, ...nodes] }));
+    setSelected(nodes.map((node) => node.id));
+    setSelectedLink(null);
+    toast(`已将 ${nodes.length} 个分镜放入画布`, 'ok');
   };
 
   const connectCreatedNode = (nodeId, link) => {
@@ -832,7 +911,7 @@ export default function Canvas() {
             {canvasInfo.name}
             <span className="h-2 w-2 rounded-full bg-brand-400 shadow-[0_0_10px_rgba(91,108,255,.65)]" />
           </h1>
-          <p className="mt-1 text-[12.5px] text-mist-400">左键选择或框选，中键拖动画布，Ctrl+滚轮缩放，普通滚轮上下移动</p>
+          <p className="mt-1 text-[12.5px] text-mist-400">左键选择或框选，中键拖动画布，Ctrl+滚轮缩放，文字框内滚轮滚动提示词</p>
           </div>
         </div>
         <span className="flex items-center gap-1.5 text-[11.5px] text-mist-400">
@@ -937,6 +1016,7 @@ export default function Canvas() {
                 onText={(text) => patchNode(n.id, { text })}
                 onPatch={(patch) => patchNode(n.id, patch)}
                 onSend={() => generateNode(n.id)}
+                onPreview={(media) => { setPreviewScale(1); setPreviewMedia(media); }}
                 onUpload={() => openPicker('image/*,video/*', { x: n.x + nodeW(n) / 2, y: n.y + nodeH(n) / 2 }, n.id)}
               />
             ))}
@@ -954,7 +1034,7 @@ export default function Canvas() {
           )}
         </div>
 
-        <div className="frost absolute left-4 top-4 z-20 flex items-center gap-1 rounded-full border border-white p-1.5 shadow-lg">
+        <div className="frost absolute bottom-4 left-1/2 z-20 flex max-w-[calc(100%-2rem)] -translate-x-1/2 flex-nowrap items-center gap-1 overflow-x-auto rounded-full border border-white p-1.5 shadow-lg [&>*]:shrink-0">
           <span title="左键选择，拖动空白处框选" className="grid h-9 w-9 place-items-center rounded-xl bg-brand-500/10 text-brand-500"><MousePointer2 size={16} /></span>
           <Sep />
           <ToolBtn icon={Type} onClick={() => addNode('text')} title="文本输入节点" />
@@ -1009,7 +1089,14 @@ export default function Canvas() {
           </div>
         )}
 
-        <Minimap nodes={doc.nodes} links={links} view={view} vp={vpSize} />
+        <Minimap
+          nodes={doc.nodes}
+          links={links}
+          view={view}
+          vp={vpSize}
+          onNavigate={(worldX, worldY) => setView((current) => ({ ...current, x: -worldX * current.z, y: -worldY * current.z }))}
+        />
+        <ChatDrawer canvasId={canvasInfo.id} canvasName={canvasInfo.name} onInsert={insertAgentReply} />
         <input
           ref={fileRef}
           type="file"
@@ -1019,6 +1106,34 @@ export default function Canvas() {
           onChange={(e) => uploadMedia(e.target.files, uploadPoint.current, uploadTarget.current)}
         />
       </div>
+      {previewMedia && createPortal((
+        <div
+          role="presentation"
+          onClick={() => setPreviewMedia(null)}
+          onWheel={(event) => {
+            event.preventDefault();
+            setPreviewScale((scale) => Math.min(4, Math.max(0.35, scale * (event.deltaY < 0 ? 1.12 : 1 / 1.12))));
+          }}
+          className="fixed inset-0 z-[100] grid place-items-center overflow-hidden bg-[#10121a]/85 p-5 backdrop-blur-sm"
+        >
+          <button
+            type="button"
+            onClick={() => setPreviewMedia(null)}
+            aria-label="关闭预览"
+            className="absolute right-5 top-5 z-10 grid h-10 w-10 place-items-center rounded-full bg-white/15 text-white transition hover:bg-white/25"
+          >
+            <X size={20} />
+          </button>
+          <img
+            src={previewMedia.src}
+            alt="图片预览"
+            onClick={(e) => e.stopPropagation()}
+            style={{ transform: `scale(${previewScale})` }}
+            className="max-h-[72vh] max-w-[72vw] rounded-xl object-contain shadow-2xl transition-transform duration-100"
+          />
+          <span className="pointer-events-none absolute bottom-5 rounded-full bg-black/35 px-3 py-1.5 text-[11px] text-white/80">滚轮缩放 {Math.round(previewScale * 100)}%</span>
+        </div>
+      ), document.body)}
     </div>
   );
 }
@@ -1044,9 +1159,10 @@ function ToolBtn({ icon: Icon, onClick, active, disabled, danger, title }) {
   );
 }
 
-function Minimap({ nodes, links, view, vp }) {
-  const W = 176;
-  const H = 116;
+function Minimap({ nodes, links, view, vp, onNavigate }) {
+  const W = MINIMAP_W;
+  const H = MINIMAP_H;
+  const gestureRef = useRef(null);
   if (!nodes.length) return null;
   const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
   const vx0 = -view.x / view.z;
@@ -1057,9 +1173,40 @@ function Minimap({ nodes, links, view, vp }) {
   const minY = Math.min(vy0, ...nodes.map((n) => n.y)) - 40;
   const maxX = Math.max(vx0 + vw, ...nodes.map((n) => n.x + nodeW(n))) + 40;
   const maxY = Math.max(vy0 + vh, ...nodes.map((n) => n.y + nodeH(n))) + 40;
-  const k = Math.min(W / (maxX - minX), H / (maxY - minY));
-  const tx = (x) => (x - minX) * k;
-  const ty = (y) => (y - minY) * k;
+  const currentMap = { minX, minY, k: Math.min(W / (maxX - minX), H / (maxY - minY)) };
+  const map = gestureRef.current?.map || currentMap;
+  const tx = (x) => (x - map.minX) * map.k;
+  const ty = (y) => (y - map.minY) * map.k;
+  const mapViewWidth = vw * map.k;
+  const mapViewHeight = vh * map.k;
+  const mapViewX = tx(vx0);
+  const mapViewY = ty(vy0);
+  const pointerPosition = (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return { x: Math.max(0, Math.min(W, event.clientX - rect.left)), y: Math.max(0, Math.min(H, event.clientY - rect.top)) };
+  };
+  const navigateFromPointer = (event, gesture) => {
+    const point = pointerPosition(event);
+    const left = Math.max(0, Math.min(W - vw * gesture.map.k, point.x - gesture.grabX));
+    const top = Math.max(0, Math.min(H - vh * gesture.map.k, point.y - gesture.grabY));
+    onNavigate(gesture.map.minX + left / gesture.map.k, gesture.map.minY + top / gesture.map.k);
+  };
+  const startNavigation = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const point = pointerPosition(event);
+    const insideView = point.x >= mapViewX && point.x <= mapViewX + mapViewWidth
+      && point.y >= mapViewY && point.y <= mapViewY + mapViewHeight;
+    const gesture = {
+      pointerId: event.pointerId,
+      map: currentMap,
+      grabX: insideView ? point.x - mapViewX : mapViewWidth / 2,
+      grabY: insideView ? point.y - mapViewY : mapViewHeight / 2,
+    };
+    gestureRef.current = gesture;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    navigateFromPointer(event, gesture);
+  };
 
   return (
     <div className="absolute bottom-5 right-5 z-20 hidden rounded-2xl border border-[#e6eaf2] bg-white/85 p-2.5 shadow-lg backdrop-blur md:block">
@@ -1069,7 +1216,20 @@ function Minimap({ nodes, links, view, vp }) {
         </span>
         <Expand size={11} className="text-mist-400" />
       </div>
-      <div className="dot-grid relative overflow-hidden rounded-xl" style={{ width: W, height: H, backgroundSize: '10px 10px' }}>
+      <div
+        className="dot-grid relative cursor-grab touch-none overflow-hidden rounded-xl active:cursor-grabbing"
+        style={{ width: W, height: H, backgroundSize: '10px 10px' }}
+        onPointerDown={startNavigation}
+        onPointerMove={(event) => {
+          const gesture = gestureRef.current;
+          if (gesture?.pointerId === event.pointerId) navigateFromPointer(event, gesture);
+        }}
+        onPointerUp={(event) => {
+          if (gestureRef.current?.pointerId === event.pointerId) gestureRef.current = null;
+        }}
+        onPointerCancel={() => { gestureRef.current = null; }}
+        aria-label="小地图，拖动视口框移动画布"
+      >
         <svg className="absolute inset-0" width={W} height={H}>
           {links.map((l) => {
             const a = byId[l.from];
@@ -1092,19 +1252,19 @@ function Minimap({ nodes, links, view, vp }) {
           <span
             key={n.id}
             className="absolute rounded-[3px] border border-mist-300/40 bg-mist-300/25"
-            style={{ left: tx(n.x), top: ty(n.y), width: Math.max(4, nodeW(n) * k), height: Math.max(3, nodeH(n) * k) }}
+            style={{ left: tx(n.x), top: ty(n.y), width: Math.max(4, nodeW(n) * map.k), height: Math.max(3, nodeH(n) * map.k) }}
           />
         ))}
         <span
           className="absolute rounded-[4px] border border-brand-400/70 bg-brand-400/5"
-          style={{ left: tx(vx0), top: ty(vy0), width: vw * k, height: vh * k }}
+          style={{ left: mapViewX, top: mapViewY, width: mapViewWidth, height: mapViewHeight, pointerEvents: 'none' }}
         />
       </div>
     </div>
   );
 }
 
-function CanvasNode({ node, active, price, busy, onMouseDown, onPortDown, onResizeDown, onText, onPatch, onSend, onUpload }) {
+function CanvasNode({ node, active, price, busy, onMouseDown, onPortDown, onResizeDown, onText, onPatch, onSend, onUpload, onPreview }) {
   const running = node.status === 'running';
   const failed = node.status === 'failed';
   const isText = node.type === 'text';
@@ -1118,10 +1278,11 @@ function CanvasNode({ node, active, price, busy, onMouseDown, onPortDown, onResi
   const Icon = isText ? Type : node.type === 'image' ? ImageIcon : Video;
   const title = node.label || (isText ? '文本提示词' : node.type === 'image' ? '图片' : '视频');
   const role = isText ? '输入' : canSend ? '生成' : '素材';
+  const box = previewBox(node);
+  const wrapsVideoControls = node.type === 'video' && canSend && box.width < VIDEO_CONTROLS_WRAP_WIDTH;
   const fileName = node.mediaUrl ? decodeURIComponent(node.mediaUrl.split('/').pop().split('?')[0]) : null;
   const mediaExtension = node.mediaUrl?.split(/[?#]/)[0].match(/\.(png|jpe?g|webp|gif|mp4|webm|mov)$/i)?.[0];
   const downloadName = `Mua-${isText ? '素材' : node.type === 'video' ? '视频' : '图片'}${mediaExtension || (node.type === 'video' ? '.mp4' : '.png')}`;
-  const box = previewBox(node);
   const rememberMedia = (el) => {
     const width = el?.videoWidth || el?.naturalWidth;
     const height = el?.videoHeight || el?.naturalHeight;
@@ -1154,12 +1315,14 @@ function CanvasNode({ node, active, price, busy, onMouseDown, onPortDown, onResi
         />
       ))}
 
-      <div className="mb-2.5 flex items-center justify-between">
-        <span className="flex items-center gap-2 text-[13px] font-semibold text-[#171a24]">
+      <div className="mb-2.5 flex min-w-0 items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-2 text-[13px] font-semibold text-[#171a24]">
           <Icon size={15} className="text-brand-400" />
-          {title}
+          <span className="truncate">{title}</span>
         </span>
-        <span className="rounded-md bg-[#eef0f6] px-1.5 py-0.5 text-[10px] text-mist-300">{role}</span>
+        <span className="shrink-0 whitespace-nowrap rounded-md bg-[#eef0f6] px-1.5 py-0.5 text-[10px] text-mist-300">
+          {role}{!isText && canSend ? ` · ${size}` : ''}
+        </span>
       </div>
 
       {isText ? (
@@ -1169,7 +1332,7 @@ function CanvasNode({ node, active, price, busy, onMouseDown, onPortDown, onResi
           onMouseDown={(e) => e.stopPropagation()}
           placeholder="写下提示词"
           style={{ height: Math.max(96, nodeH(node) - 88) }}
-          className="w-full resize-none rounded-xl border border-[#e6eaf2] bg-[#f7f8fc] px-3 py-2.5 text-[12px] leading-relaxed text-[#171a24] outline-none placeholder:text-mist-400 focus:border-brand-400/40"
+          className="w-full resize-none overflow-y-auto rounded-xl border border-[#e6eaf2] bg-[#f7f8fc] px-3 py-2.5 text-[12px] leading-relaxed text-[#171a24] outline-none placeholder:text-mist-400 focus:border-brand-400/40"
         />
       ) : (
         <>
@@ -1185,9 +1348,9 @@ function CanvasNode({ node, active, price, busy, onMouseDown, onPortDown, onResi
         <div className="relative overflow-hidden rounded-xl bg-ink-700" style={{ width: box.width, height: box.height }}>
           {node.mediaUrl ? (
             node.type === 'video' ? (
-              <video src={node.mediaUrl} muted loop playsInline autoPlay draggable={false} onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }} onLoadedMetadata={(e) => rememberMedia(e.currentTarget)} className="canvas-media h-full w-full object-contain" />
+              <video src={node.mediaUrl} controls loop playsInline draggable={false} onMouseDown={(e) => e.stopPropagation()} onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }} onLoadedMetadata={(e) => rememberMedia(e.currentTarget)} className="canvas-media h-full w-full object-contain" />
             ) : (
-              <img src={node.mediaUrl} alt="" draggable={false} onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }} onLoad={(e) => rememberMedia(e.currentTarget)} className="canvas-media h-full w-full select-none object-contain" />
+              <img src={node.mediaUrl} alt="图片素材" draggable={false} onMouseDown={(e) => e.stopPropagation()} onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }} onLoad={(e) => rememberMedia(e.currentTarget)} className="canvas-media h-full w-full select-none object-contain" />
             )
           ) : (
             <div className="grid h-full place-items-center bg-[radial-gradient(circle_at_30%_20%,rgba(122,92,255,.16),transparent_62%)]">
@@ -1213,20 +1376,32 @@ function CanvasNode({ node, active, price, busy, onMouseDown, onPortDown, onResi
               )}
             </div>
           )}
-          {node.mediaUrl && (
+        </div>
+        {node.mediaUrl && (
+          <div className="mt-2 flex h-8 items-center justify-end gap-1.5" onMouseDown={(e) => e.stopPropagation()}>
+            {node.type !== 'video' && (
+              <button
+                type="button"
+                aria-label="放大图片预览"
+                title="放大图片预览"
+                onClick={(e) => { e.stopPropagation(); onPreview?.({ type: 'image', src: node.mediaUrl }); }}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#e6eaf2] bg-white text-[#343b50] transition hover:border-brand-300 hover:text-brand-600"
+              >
+                <Expand size={14} />
+              </button>
+            )}
             <a
               href={node.mediaUrl}
               download={downloadName}
               aria-label={`下载${node.type === 'video' ? '视频' : '图片'}`}
               title="下载"
-              onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
-              className="absolute right-2 top-2 z-10 inline-flex items-center gap-1.5 rounded-lg border border-white/70 bg-white/95 px-2.5 py-1.5 text-[11px] font-medium text-[#343b50] shadow-sm transition hover:border-brand-300 hover:text-brand-600"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#e6eaf2] bg-white px-2.5 text-[11px] font-medium text-[#343b50] transition hover:border-brand-300 hover:text-brand-600"
             >
               <Download size={13} /> 下载
             </a>
-          )}
-        </div>
+          </div>
+        )}
         </>
       )}
 
@@ -1247,11 +1422,14 @@ function CanvasNode({ node, active, price, busy, onMouseDown, onPortDown, onResi
       </div>
 
       {canSend && (
-        <div className="mt-2.5 flex items-center gap-1.5" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5" onMouseDown={(e) => e.stopPropagation()}>
           <select
             value={size}
             onChange={(e) => onPatch({ size: e.target.value })}
-            className="h-8 min-w-0 flex-1 cursor-pointer rounded-lg border border-[#e6eaf2] bg-white px-1.5 font-mono text-[11px] text-[#171a24] outline-none"
+            className={clsx(
+              'h-8 cursor-pointer rounded-lg border border-[#e6eaf2] bg-white font-mono text-[11px] text-[#171a24] outline-none',
+              node.type === 'video' ? 'w-[72px] shrink-0 px-1' : 'min-w-0 flex-1 px-1.5',
+            )}
             title="比例"
           >
             {sizes.map((x) => <option key={x} value={x}>{x}</option>)}
@@ -1260,7 +1438,7 @@ function CanvasNode({ node, active, price, busy, onMouseDown, onPortDown, onResi
             <select
               value={duration}
               onChange={(e) => onPatch({ duration: Number(e.target.value) })}
-              className="h-8 w-[58px] cursor-pointer rounded-lg border border-[#e6eaf2] bg-white px-1 font-mono text-[11px] text-[#171a24] outline-none"
+              className="h-8 w-[60px] shrink-0 cursor-pointer rounded-lg border border-[#e6eaf2] bg-white px-1 font-mono text-[11px] text-[#171a24] outline-none"
               title="时长，最高 10 秒"
             >
               {VIDEO_DURATIONS.map((d) => <option key={d} value={d}>{d}s</option>)}
@@ -1270,7 +1448,10 @@ function CanvasNode({ node, active, price, busy, onMouseDown, onPortDown, onResi
             type="button"
             disabled={busy || running}
             onClick={onSend}
-            className="mint-btn flex h-8 shrink-0 items-center gap-1 rounded-lg px-2.5 text-[11.5px] font-semibold disabled:opacity-50"
+            className={clsx(
+              'mint-btn flex h-8 min-w-[96px] flex-1 items-center justify-center gap-1 rounded-lg px-2.5 text-[11.5px] font-semibold disabled:opacity-50',
+              wrapsVideoControls && 'w-full',
+            )}
           >
             {running ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
             发送

@@ -148,6 +148,7 @@ r.get('/', requireAuth, async (req, res) => {
       label: a.label,
       mine: a.owner_id === req.user.id,
       shared: a.owner_id === null,
+      generationEnabled: up ? up.generation_enabled !== false : false,
       status: !upstreamUp ? 'unavailable' : up ? (up.ok === true ? 'ok' : up.ok === false ? 'error' : 'unknown') : 'missing',
       note: up?.note || a.note || null,
       expiresAt: up?.expires_at ?? a.expires_at,
@@ -177,7 +178,61 @@ r.get('/', requireAuth, async (req, res) => {
     checkedAt: usable.map((a) => a.quota?.checkedAt).filter(Boolean).sort().pop() || null,
   };
 
-  res.json({ accounts, summary, upstreamUp, upstreamError: sync.error || null });
+  let scheduler = { maxConcurrency: 8 };
+  try {
+    const out = await muse.scheduler();
+    scheduler = { maxConcurrency: out.max_concurrency || 8 };
+  } catch {}
+  res.json({ accounts, summary, upstreamUp, upstreamError: sync.error || null, scheduler });
+});
+
+r.patch('/scheduler', requireAuth, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: '仅管理员可以修改全局并发数' });
+  try {
+    const out = await muse.updateScheduler(req.body?.maxConcurrency);
+    res.json({ maxConcurrency: out.max_concurrency });
+  } catch (e) {
+    res.status(e.status || 502).json({ error: e.message });
+  }
+});
+
+r.patch('/:id/label', requireAuth, async (req, res) => {
+  const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: '账号不存在' });
+  if (row.owner_id && row.owner_id !== req.user.id && req.user.role !== 'admin') {
+    return res.status(403).json({ error: '无权修改该账号备注' });
+  }
+  if (!row.owner_id && req.user.role !== 'admin') {
+    return res.status(403).json({ error: '仅管理员可以修改公共账号备注' });
+  }
+  const label = typeof req.body?.label === 'string' ? req.body.label.trim() : '';
+  if (!label || label.length > 40) return res.status(400).json({ error: '备注名需为 1 到 40 个字符' });
+  try {
+    if (row.upstream_id) await muse.updateAccount(row.upstream_id, { label });
+    db.prepare('UPDATE accounts SET label = ?, synced_at = ? WHERE id = ?').run(label, now(), row.id);
+    res.json({ ok: true, label });
+  } catch (e) {
+    res.status(e.status || 502).json({ error: `修改备注失败：${e.message}` });
+  }
+});
+
+r.patch('/:id/generation', requireAuth, async (req, res) => {
+  const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: '账号不存在' });
+  if (!row.upstream_id) return res.status(409).json({ error: '账号尚未连接到 Muse 上游' });
+  if (!row.owner_id && req.user.role !== 'admin') {
+    return res.status(403).json({ error: '仅管理员可以调整公共账号的调度状态' });
+  }
+  if (row.owner_id && row.owner_id !== req.user.id && req.user.role !== 'admin') {
+    return res.status(403).json({ error: '无权设置该账号' });
+  }
+  if (typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'enabled 必须是布尔值' });
+  try {
+    const out = await muse.updateAccount(row.upstream_id, { generation_enabled: req.body.enabled });
+    res.json({ generationEnabled: out.generation_enabled !== false });
+  } catch (e) {
+    res.status(e.status || 502).json({ error: e.message });
+  }
 });
 
 /* 触发一次上游额度刷新（全池） */

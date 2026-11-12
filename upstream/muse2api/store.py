@@ -117,7 +117,7 @@ class Store:
             acc = {"id": aid, "label": label or aid, "cookies": cookies,
                    "cookies_exp": exp, "expires_at": account_expiry(exp, now),
                    "expiry_anchor": None,
-                   "enabled": True, "created_at": now,
+                   "enabled": True, "generation_enabled": True, "created_at": now,
                    "last_used": None, "last_keepalive": None, "use_count": 0,
                    "ok": None, "note": "", "synced_at": None}
             self.accounts.append(acc)
@@ -156,11 +156,13 @@ class Store:
     def pick_account(self, preferred_id: str | None = None, rotate: bool = True,
                      force_rotate: bool = False, exclude_id: str | None = None,
                      exclude_ids: set[str] | list[str] | None = None,
-                     record_use: bool = True) -> dict | None:
+                     record_use: bool = True, generation_only: bool = False) -> dict | None:
         """选择可用账号：优先复用当前已预热的健康账号（减少切号重连耗时），每满 15 次或遇错自动轮转。
         exclude_ids: 需要排除的账号 ID 集合（例如正在被其他并发线程占用的账号）。"""
         with _LOCK:
-            live = [a for a in self.accounts if a.get("enabled", True) and a.get("cookies")]
+            live = [a for a in self.accounts if a.get("enabled", True)
+                    and (not generation_only or a.get("generation_enabled", True))
+                    and a.get("cookies")]
             if not live:
                 return None
             blocked = set(exclude_ids or [])

@@ -38,8 +38,16 @@ const upload = multer({
   }),
   limits: { fileSize: 40 * 1024 * 1024, files: 10 },
   fileFilter: (_req, file, cb) => {
-    const ok = /^(image|video|audio)\//.test(file.mimetype) || file.mimetype === 'application/pdf';
-    cb(ok ? null : new Error('仅支持图片 / 视频 / 音频 / PDF 参考素材'), ok);
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const document = ['.pdf', '.doc', '.docx'].includes(ext) && [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/octet-stream',
+    ].includes(file.mimetype);
+    const media = /^(image|video|audio)\//.test(file.mimetype);
+    const ok = media || document;
+    cb(ok ? null : new Error('支持图片、视频、音频、PDF 和 Word 文档'), ok);
   },
 });
 
@@ -48,7 +56,8 @@ const MIME = {
   '.gif': 'image/gif', '.heic': 'image/heic', '.avif': 'image/avif',
   '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm',
   '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4',
-  '.pdf': 'application/pdf',
+  '.pdf': 'application/pdf', '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 };
 
 /** 把平台本地上传的参考素材转成 data URL，上游无需公网访问权限 */
@@ -88,9 +97,10 @@ function normalizeRefs(list) {
 /* ------------------------------ 上传 ------------------------------ */
 r.post('/upload', requireAuth, upload.array('files', 10), (req, res) => {
   const files = (req.files || []).map((f) => {
+    const mime = MIME[path.extname(f.originalname || '').toLowerCase()] || f.mimetype;
     db.prepare('INSERT INTO uploads(id, user_id, filename, mime, bytes, created_at) VALUES(?,?,?,?,?,?)')
-      .run(uid('u_'), req.user.id, f.filename, f.mimetype, f.size, now());
-    return { url: `/uploads/${f.filename}`, name: f.originalname, bytes: f.size, mime: f.mimetype };
+      .run(uid('u_'), req.user.id, f.filename, mime, f.size, now());
+    return { url: `/uploads/${f.filename}`, name: f.originalname, bytes: f.size, mime };
   });
   if (!files.length) return res.status(400).json({ error: '没有收到文件' });
   res.json({ files });

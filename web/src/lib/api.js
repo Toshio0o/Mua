@@ -56,7 +56,10 @@ export const api = {
   bindStatus: (code) => request(`/api/accounts/bind/${code}`),
   testAccount: (id) => request(`/api/accounts/${id}/test`, { method: 'POST' }),
   keepaliveAccount: (id) => request(`/api/accounts/${id}/keepalive`, { method: 'POST' }),
+  renameAccount: (id, label) => request(`/api/accounts/${id}/label`, { method: 'PATCH', body: { label } }),
   deleteAccount: (id) => request(`/api/accounts/${id}`, { method: 'DELETE' }),
+  setAccountGeneration: (id, enabled) => request(`/api/accounts/${id}/generation`, { method: 'PATCH', body: { enabled } }),
+  setSchedulerConcurrency: (maxConcurrency) => request('/api/accounts/scheduler', { method: 'PATCH', body: { maxConcurrency } }),
 
   createVideo: (b) => request('/api/videos', { method: 'POST', body: b }),
   createImage: (b) => request('/api/images', { method: 'POST', body: b }),
@@ -103,6 +106,8 @@ export const api = {
 
   chatModels: () => request('/api/chat/models'),
   chat: (b) => request('/api/chat', { method: 'POST', body: b }),
+  canvasChat: (canvasId) => request(`/api/chat/canvases/${encodeURIComponent(canvasId)}`),
+  clearCanvasChat: (canvasId) => request(`/api/chat/canvases/${encodeURIComponent(canvasId)}`, { method: 'DELETE' }),
 
   membership: () => request('/api/membership'),
   subscribe: (plan) => request('/api/membership', { method: 'POST', body: { plan } }),
