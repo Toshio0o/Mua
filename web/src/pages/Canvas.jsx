@@ -284,7 +284,17 @@ export default function Canvas() {
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const marked = el?.closest?.('[data-node-id]');
       const targetId = marked?.getAttribute('data-node-id');
-      if (!targetId || targetId === d.from) return;
+      if (!targetId) {
+        const rect = viewportRef.current?.getBoundingClientRect();
+        if (!rect || e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
+        const x = Math.min(Math.max(8, e.clientX - rect.left), rect.width - 188);
+        const y = Math.min(Math.max(8, e.clientY - rect.top), rect.height - 196);
+        setMenu({ x, y, point: toCanvas(e.clientX, e.clientY), link: { from: d.from, side: d.side } });
+        setSelected([]);
+        setSelectedLink(null);
+        return;
+      }
+      if (targetId === d.from) return;
       const from = d.side === 'in' ? targetId : d.from;
       const to = d.side === 'in' ? d.from : targetId;
       if (from === to) return;
@@ -402,6 +412,15 @@ export default function Canvas() {
     setSelectedLink(null);
     setMenu(null);
     return n.id;
+  };
+
+  const connectCreatedNode = (nodeId, link) => {
+    if (!link) return;
+    const from = link.side === 'in' ? nodeId : link.from;
+    const to = link.side === 'in' ? link.from : nodeId;
+    setDoc((d) => addLink(d, from, to));
+    setSelectedLink({ from, to });
+    setSelected([nodeId]);
   };
 
   const removeSelected = () => {
@@ -644,7 +663,7 @@ export default function Canvas() {
       <div className="frost sticky top-0 z-30 flex shrink-0 items-center justify-between gap-4 border-b border-[#e6eaf2] px-7 py-4">
         <div>
           <h1 className="flex items-center gap-2 text-[22px] font-semibold tracking-tight text-[#171a24]">
-            无限画布
+            Mua 画布
             <span className="h-2 w-2 rounded-full bg-brand-400 shadow-[0_0_10px_rgba(91,108,255,.65)]" />
           </h1>
           <p className="mt-1 text-[12.5px] text-mist-400">滚轮缩放，拖动空白处平移；双击新建节点，Ctrl+V 或拖入图片和视频</p>
@@ -725,15 +744,15 @@ export default function Canvas() {
                     <path
                       d={d}
                       fill="none"
-                      stroke={on ? 'url(#edge-live)' : '#c5c8e8'}
+                      stroke={on ? 'url(#edge-live)' : '#7b84a5'}
                       strokeWidth={on ? 2.2 : 1.5}
-                      strokeDasharray={on ? undefined : '5 5'}
+                      strokeOpacity="0.6"
                     />
                   </g>
                 );
               })}
               {draftPath && (
-                <path d={draftPath} fill="none" stroke="url(#edge-live)" strokeWidth="2" strokeDasharray="4 4" />
+                <path d={draftPath} fill="none" stroke="url(#edge-live)" strokeWidth="2" />
               )}
             </svg>
 
@@ -790,10 +809,15 @@ export default function Canvas() {
             onMouseDown={(e) => e.stopPropagation()}
           >
             {[
-              ['上传图片节点', Upload, () => openPicker('image/*', menu.point, null)],
-              ['文本输入节点', Type, () => addNode('text', { intent: 'input', label: '文本' }, menu.point)],
-              ['制作图片节点', ImageIcon, () => addNode('image', { intent: 'generate', label: '制作图片' }, menu.point)],
-              ['制作视频节点', Video, () => addNode('video', { intent: 'generate', label: '制作视频' }, menu.point)],
+              ['上传图片节点', Upload, () => {
+                if (!menu.link) return openPicker('image/*', menu.point, null);
+                const nodeId = addNode('image', { intent: 'asset', label: '图片素材' }, menu.point);
+                connectCreatedNode(nodeId, menu.link);
+                openPicker('image/*', menu.point, nodeId);
+              }],
+              ['文本输入节点', Type, () => connectCreatedNode(addNode('text', { intent: 'input', label: '文本' }, menu.point), menu.link)],
+              ['制作图片节点', ImageIcon, () => connectCreatedNode(addNode('image', { intent: 'generate', label: '制作图片' }, menu.point), menu.link)],
+              ['制作视频节点', Video, () => connectCreatedNode(addNode('video', { intent: 'generate', label: '制作视频' }, menu.point), menu.link)],
             ].map(([label, Icon, run]) => (
               <button
                 key={label}

@@ -75,7 +75,7 @@ r.patch('/me', requireAuth, (req, res) => {
     if (!verifyPassword(String(oldPassword || ''), req.user.password_hash)) {
       return res.status(400).json({ error: '原密码不正确' });
     }
-    if (String(password).length < 6) return res.status(400).json({ error: '新密码至少 6 位' });
+    if (String(password).length < 12) return res.status(400).json({ error: '新密码至少 12 位' });
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(String(password)), req.user.id);
   }
   res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)) });

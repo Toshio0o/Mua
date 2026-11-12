@@ -1,26 +1,29 @@
 import { useRef, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { Sparkles, Workflow, KeyRound, LogOut, Camera, Loader2 } from 'lucide-react';
+import { Sparkles, Workflow, KeyRound, LogOut, Camera, Loader2, Shield } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from '../store/auth.jsx';
 import { api } from '../lib/api.js';
 import ThemeToggle from './ThemeToggle.jsx';
+import ChangePasswordModal from './ChangePasswordModal.jsx';
 import { useToast } from './ui.jsx';
 import webPackage from '../../package.json';
 
 /** 侧栏只保留三个入口：快捷创作 / 无限画布 / muse 导入 */
 const NAV = [
   { to: '/create', label: '快捷创作', icon: Sparkles },
-  { to: '/canvas', label: '无限画布', icon: Workflow },
+  { to: '/canvas', label: 'Mua 画布', icon: Workflow },
   { to: '/accounts', label: 'muse导入', icon: KeyRound },
 ];
 
 export default function Layout() {
-  const { user, logout, refresh } = useAuth();
+  const { user, logout, patchUser } = useAuth();
   const toast = useToast();
   const nav = useNavigate();
   const avatarRef = useRef(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
   const initial = (user?.name || user?.email || '?').slice(0, 1).toUpperCase();
 
   const uploadAvatar = async (event) => {
@@ -32,8 +35,9 @@ export default function Layout() {
     setAvatarBusy(true);
     try {
       const uploaded = await api.upload([file]);
-      await api.updateMe({ avatarUrl: uploaded.files[0].url });
-      await refresh();
+      const updated = await api.updateMe({ avatarUrl: uploaded.files[0].url });
+      patchUser({ avatarUrl: updated.user.avatarUrl });
+      setAvatarLoadFailed(false);
       toast('头像已更新', 'ok');
     } catch (error) {
       toast(error.message, 'error');
@@ -61,6 +65,16 @@ export default function Layout() {
         </nav>
 
         <div className="mt-auto flex flex-col items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPasswordOpen(true)}
+            title="修改密码"
+            aria-label="修改密码"
+            className="flex w-full flex-col items-center gap-1 rounded-xl py-1.5 text-mist-400 transition hover:bg-ink-800 hover:text-ink-950"
+          >
+            <Shield size={16} strokeWidth={1.8} />
+            <span className="text-[9px] font-medium">修改密码</span>
+          </button>
           <div className="relative">
             <button
               type="button"
@@ -69,7 +83,14 @@ export default function Layout() {
               aria-label="上传头像"
               className="group relative grid h-9 w-9 place-items-center overflow-hidden rounded-full border border-ink-600 bg-ink-800 text-[12px] font-semibold text-ink-950"
             >
-              {user?.avatarUrl ? <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" /> : initial}
+              {user?.avatarUrl && !avatarLoadFailed ? (
+                <img
+                  src={user.avatarUrl}
+                  alt=""
+                  className="h-full w-full object-cover"
+                  onError={() => setAvatarLoadFailed(true)}
+                />
+              ) : initial}
               <span className="absolute inset-0 grid place-items-center bg-black/45 text-white opacity-0 transition group-hover:opacity-100">
                 {avatarBusy ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
               </span>
@@ -92,6 +113,8 @@ export default function Layout() {
       <main className="page-bg min-h-0 min-w-0 flex-1 overflow-y-auto">
         <Outlet />
       </main>
+
+      <ChangePasswordModal open={passwordOpen} onClose={() => setPasswordOpen(false)} />
     </div>
   );
 }

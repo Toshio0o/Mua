@@ -44,7 +44,7 @@ export default function SettingsPage() {
   };
 
   const savePw = async () => {
-    if (newPw.length < 6) return toast('新密码至少 6 位', 'error');
+    if (newPw.length < 12) return toast('新密码至少 12 位', 'error');
     setSavingPw(true);
     try {
       await api.updateMe({ password: newPw, oldPassword: oldPw });
@@ -161,7 +161,7 @@ export default function SettingsPage() {
                 type="password"
                 value={newPw}
                 onChange={(e) => setNewPw(e.target.value)}
-                placeholder="至少 6 位"
+                placeholder="至少 12 位"
                 className="h-10 w-full rounded-xl border border-[#1e2432] bg-ink-900 px-3.5 text-[13px] text-mist-100 outline-none focus:border-brand-500/50"
               />
             </div>

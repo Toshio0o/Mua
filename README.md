@@ -4,7 +4,7 @@
 
 上游复用开源项目 [muse2api](https://github.com/czg86389-hub/muse2api)（把 muse.ai 逆向封成 OpenAI 兼容 API，靠无头 Chrome + CDP 驱动网页端）。本仓库在它之上补了平台层。
 
-当前产品版本为 **Mua v1.1.0**，扩展版本为 **1.0.1**。详细更新记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前产品版本为 **Mua v1.1.1**，扩展版本为 **1.0.1**。详细更新记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ```
 ┌──────────────┐   HTTP    ┌─────────────────┐   HTTP    ┌──────────────┐  CDP  ┌────────┐  HTTPS  ┌──────────┐

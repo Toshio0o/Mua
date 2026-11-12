@@ -1,6 +1,6 @@
 {
   "name": "museapi-video-server",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "type": "module",
   "description": "Mua 图片与视频创作平台后端：账号池、积分、任务编排、作品库",

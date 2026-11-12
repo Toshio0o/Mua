@@ -8,7 +8,7 @@ import ThemeToggle from '../components/ThemeToggle.jsx';
 
 const HIGHLIGHTS = [
   { icon: Film, title: '文生视频 · 图生视频', desc: '一句话出 5–10 秒成片，首尾帧与参考图都能喂' },
-  { icon: Layers, title: '无限画布 · 节点工作流', desc: '拖拽节点串起生成流程，自动保存不用管' },
+  { icon: Layers, title: 'Mua 画布 · 节点工作流', desc: '拖拽节点串起生成流程，自动保存不用管' },
   { icon: Zap, title: '账号池 · 自动调度', desc: '多账号轮转与续期，失败自动退还积分' },
 ];
 
@@ -62,7 +62,7 @@ export default function Login() {
             变成<span className="brand-text"> 能用的片子</span>
           </h1>
           <p className="mt-3 max-w-md text-[13px] leading-relaxed text-mist-400">
-            Mua 集图片、视频生成、无限画布与账号管理于一体。
+            Mua 集图片、视频生成、画布创作与账号管理于一体。
           </p>
 
           <div className="mt-8 space-y-3">
