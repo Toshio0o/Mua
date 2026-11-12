@@ -62,14 +62,22 @@ export default function Layout() {
       {/* ---------------- 侧边栏 ---------------- */}
       <aside className={clsx('frost relative z-20 flex shrink-0 flex-col border-r border-ink-600 py-4 transition-[width] duration-200', sidebarOpen ? 'w-[224px]' : 'w-[72px]')}>
         <div className={clsx('flex w-full items-center px-3', sidebarOpen ? 'justify-between' : 'flex-col gap-3')}>
-          <button
-            onClick={() => nav('/projects')}
-            title="Mua 项目管理"
-            className="flex h-11 items-center gap-2.5"
-          >
-            <img src="/brand/mua-icon.png" alt="Mua" draggable="false" className="h-11 w-11 shrink-0 rounded-2xl border border-white/70 bg-white object-cover shadow-sm" />
-            {sidebarOpen && <span className="text-[16px] font-semibold tracking-wide text-[#171a24]">Mua</span>}
-          </button>
+          <div className="group/logo relative z-0 hover:z-50 focus-within:z-50">
+            <button
+              onClick={() => nav('/projects')}
+              title="Mua 项目管理"
+              className="flex h-11 items-center gap-2.5"
+            >
+              <img src="/brand/mua-icon.png" alt="Mua" draggable="false" className="h-11 w-11 shrink-0 rounded-2xl border border-white/70 bg-white object-cover shadow-sm transition-transform duration-200 group-hover/logo:scale-110" />
+              {sidebarOpen && <span className="text-[16px] font-semibold tracking-wide text-[#171a24]">Mua</span>}
+            </button>
+            <div className="pointer-events-none absolute left-full top-0 z-50 w-[176px] origin-top-left scale-95 pl-3 opacity-0 transition duration-200 group-hover/logo:pointer-events-auto group-hover/logo:scale-100 group-hover/logo:opacity-100 group-focus-within/logo:pointer-events-auto group-focus-within/logo:scale-100 group-focus-within/logo:opacity-100">
+              <div className="rounded-3xl border border-white/80 bg-white/95 p-3 shadow-[0_18px_48px_-20px_rgba(35,44,80,.35)] backdrop-blur-xl">
+                <img src="/brand/mua-icon.png" alt="Mua 品牌 Logo 放大预览" draggable="false" className="aspect-square w-full rounded-2xl border border-[#edf0f6] bg-white object-cover" />
+                <p className="mt-2 text-center text-[11px] font-medium tracking-wide text-[#596176]">Mua 品牌 Logo</p>
+              </div>
+            </div>
+          </div>
           <button
             type="button"
             onClick={toggleSidebar}
