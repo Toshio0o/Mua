@@ -23,7 +23,7 @@
 
 ## 产品界面截图
 
-以下为 Mua v1.2.9 当前界面的浏览器截图。截图里的项目和账号均为演示数据，账号名称、邮箱、账号 ID、Cookie 与会话资料均未使用真实信息。
+以下为 Mua v1.2.9 当前界面的浏览器截图。项目管理、项目画布列表和账号页面使用演示数据。Mua 画布截图取自实际创作画布，并使用真实生成的图片与视频；公开展示前已将提示词、项目名称、媒体文件名和个人资料替换为通用内容。
 
 <table>
   <tr>
@@ -38,7 +38,7 @@
   </tr>
   <tr>
     <td width="50%" align="center">
-      <img src="docs/prototypes/canvas.jpg" alt="Mua 节点画布截图，使用演示数据" width="100%"><br>
+      <img src="docs/prototypes/canvas.jpg" alt="Mua 真实创作画布截图，使用实际生成素材并隐藏个人信息" width="100%"><br>
       <b>Mua 画布</b> · 图片、视频、提示词节点与连线工作流
     </td>
     <td width="50%" align="center">
