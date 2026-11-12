@@ -125,14 +125,15 @@ async function syncFromUpstream() {
         note: a.note || null,
       });
     }
-    return accounts;
+    return { accounts, available: true };
   } catch (e) {
-    return [];
+    return { accounts: [], available: false, error: e.message };
   }
 }
 
 r.get('/', requireAuth, async (req, res) => {
-  const upstream = await syncFromUpstream();
+  const sync = await syncFromUpstream();
+  const { accounts: upstream, available: upstreamUp } = sync;
   const upMap = new Map(upstream.map((a) => [a.id, a]));
   const local = localAccounts(req.user.role === 'admin' ? null : req.user.id);
 
@@ -147,7 +148,7 @@ r.get('/', requireAuth, async (req, res) => {
       label: a.label,
       mine: a.owner_id === req.user.id,
       shared: a.owner_id === null,
-      status: up ? (up.ok === true ? 'ok' : up.ok === false ? 'error' : 'unknown') : 'missing',
+      status: !upstreamUp ? 'unavailable' : up ? (up.ok === true ? 'ok' : up.ok === false ? 'error' : 'unknown') : 'missing',
       note: up?.note || a.note || null,
       expiresAt: up?.expires_at ?? a.expires_at,
       quota,
@@ -157,7 +158,7 @@ r.get('/', requireAuth, async (req, res) => {
   });
 
   /* ---- 汇总：当前账号池的可用总量 ---- */
-  const alive = accounts.filter((a) => a.status !== 'missing');
+  const alive = accounts.filter((a) => a.status !== 'missing' && a.status !== 'unavailable');
   const usable = alive.filter((a) => a.status === 'ok');
   const withPct = usable.filter((a) => a.quota?.weeklyLeftPct != null);
   const summary = {
@@ -176,7 +177,7 @@ r.get('/', requireAuth, async (req, res) => {
     checkedAt: usable.map((a) => a.quota?.checkedAt).filter(Boolean).sort().pop() || null,
   };
 
-  res.json({ accounts, summary, upstreamUp: upstream.length > 0 });
+  res.json({ accounts, summary, upstreamUp, upstreamError: sync.error || null });
 });
 
 /* 触发一次上游额度刷新（全池） */

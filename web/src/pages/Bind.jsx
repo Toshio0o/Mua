@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Sparkles, CheckCircle2, AlertTriangle, Loader2, Copy, ArrowRight, Puzzle } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, Loader2, Copy, ArrowRight, Puzzle } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { Button, useToast, Spinner } from '../components/ui.jsx';
 
@@ -97,10 +97,11 @@ export default function Bind() {
 
       <div className="relative w-full max-w-[440px] fade-in">
         <div className="mb-6 flex flex-col items-center gap-2.5">
-          <div className="grid h-12 w-12 place-items-center rounded-2xl brand-gradient shadow-xl shadow-brand-600/30">
-            <Sparkles size={22} className="text-white" />
+          <img src="/brand/mua-icon.png" alt="Mua" draggable="false" className="h-14 w-14 rounded-[20px] border border-white bg-white object-cover shadow-xl shadow-brand-600/15" />
+          <div className="text-center">
+            <p className="font-display text-[20px] font-extrabold brand-text">Mua</p>
+            <h1 className="mt-1 text-[19px] font-semibold tracking-tight text-[#171a24]">绑定 muse.ai 账号</h1>
           </div>
-          <h1 className="text-[19px] font-semibold tracking-tight text-[#171a24]">绑定 muse.ai 账号</h1>
           <p className="text-[12.5px] text-mist-400">浏览器扩展会自动读取登录态，无需 F12</p>
         </div>
 
@@ -181,7 +182,7 @@ export default function Bind() {
                 <li>点「加载已解压的扩展程序」，选解压出来的文件夹</li>
                 <li>回到本页刷新，扩展会自动完成绑定</li>
               </ol>
-              <a href="/download/museapi-video-extension.zip" download>
+              <a href="/download/mua-account-binding.zip" download>
                 <Button size="sm" variant="soft" className="mt-3 w-full">下载扩展包</Button>
               </a>
             </div>

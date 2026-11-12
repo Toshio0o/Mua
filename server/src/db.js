@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   user_id     TEXT NOT NULL,
   type        TEXT NOT NULL,              -- video | image
   project_id  TEXT,
+  canvas_id   TEXT,
   prompt      TEXT NOT NULL,
   params      TEXT NOT NULL DEFAULT '{}', -- 请求参数 JSON
   upstream_id TEXT,
@@ -84,6 +85,29 @@ CREATE TABLE IF NOT EXISTS uploads (
   bytes      INTEGER NOT NULL,
   created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS projects (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  is_scratch INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS canvases (
+  id            TEXT PRIMARY KEY,
+  project_id    TEXT NOT NULL,
+  user_id       TEXT NOT NULL,
+  name          TEXT NOT NULL,
+  document_json TEXT NOT NULL DEFAULT '{}',
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_canvases_project ON canvases(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_canvases_user ON canvases(user_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS bind_codes (
   code       TEXT PRIMARY KEY,
@@ -186,6 +210,14 @@ try {
 try {
   db.exec('ALTER TABLE jobs ADD COLUMN project_id TEXT');
 } catch { /* 已存在 */ }
+try {
+  db.exec('ALTER TABLE jobs ADD COLUMN canvas_id TEXT');
+} catch { /* 已存在 */ }
+try {
+  db.exec('ALTER TABLE projects ADD COLUMN is_scratch INTEGER NOT NULL DEFAULT 0');
+} catch { /* 已存在 */ }
+db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(user_id, project_id, created_at DESC)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_canvas ON jobs(user_id, canvas_id, created_at DESC)');
 
 export const uid = (p = '') => p + crypto.randomBytes(9).toString('hex');
 export const now = () => Date.now();
@@ -267,6 +299,7 @@ export function shapeJob(j) {
     userId: j.user_id,
     type: j.type,
     projectId: j.project_id || null,
+    canvasId: j.canvas_id || null,
     prompt: j.prompt,
     params,
     upstreamId: j.upstream_id || null,
@@ -286,7 +319,7 @@ export function shapeJob(j) {
 }
 
 export function updateJob(id, patch) {
-  const allowed = ['upstream_id', 'status', 'progress', 'result', 'error', 'media_file', 'account_id', 'finished_at', 'refunded', 'project_id'];
+  const allowed = ['upstream_id', 'status', 'progress', 'result', 'error', 'media_file', 'account_id', 'finished_at', 'refunded', 'project_id', 'canvas_id'];
   const cols = [];
   const vals = [];
   for (const [k, v] of Object.entries(patch)) {
@@ -300,12 +333,14 @@ export function updateJob(id, patch) {
   db.prepare(`UPDATE jobs SET ${cols.join(', ')} WHERE id = ?`).run(...vals);
 }
 
-export function listJobs({ userId, type, status, page = 1, pageSize = 24 }) {
+export function listJobs({ userId, type, status, projectId, canvasId, page = 1, pageSize = 24 }) {
   const where = [];
   const args = [];
   if (userId) { where.push('user_id = ?'); args.push(userId); }
   if (type) { where.push('type = ?'); args.push(type); }
   if (status) { where.push('status = ?'); args.push(status); }
+  if (projectId) { where.push('project_id = ?'); args.push(projectId); }
+  if (canvasId) { where.push('canvas_id = ?'); args.push(canvasId); }
   const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const total = db.prepare(`SELECT COUNT(*) AS n FROM jobs ${w}`).get(...args).n;
   const rows = db

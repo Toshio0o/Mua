@@ -36,6 +36,11 @@ async function call(pathname, { method = 'GET', body, raw = false, timeout = 120
     return data;
   } catch (err) {
     if (err.name === 'AbortError') throw new MuseError('上游请求超时', 504);
+    if (err instanceof TypeError && /fetch failed|failed to fetch/i.test(err.message)) {
+      throw new MuseError(`无法连接 Muse2API（${CFG.museBase}），请确认本地上游服务正在运行`, 503, {
+        code: 'UPSTREAM_UNAVAILABLE',
+      });
+    }
     throw err;
   } finally {
     clearTimeout(timer);

@@ -12,6 +12,7 @@ const STATUS = {
   ok: { tone: 'ok', label: '可用' },
   error: { tone: 'error', label: '异常' },
   unknown: { tone: 'warn', label: '待检测' },
+  unavailable: { tone: 'warn', label: '上游离线' },
   missing: { tone: 'error', label: '上游已删' },
 };
 
@@ -20,6 +21,7 @@ export default function Accounts() {
   const { user } = useAuth();
   const [list, setList] = useState([]);
   const [summary, setSummary] = useState(null);
+  const [upstreamUp, setUpstreamUp] = useState(true);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [bindOpen, setBindOpen] = useState(false);
@@ -34,6 +36,7 @@ export default function Accounts() {
       const out = await api.accounts();
       setList(out.accounts);
       setSummary(out.summary || null);
+      setUpstreamUp(out.upstreamUp !== false);
     } catch (e) {
       toast(e.message, 'error');
     } finally {
@@ -150,6 +153,7 @@ export default function Accounts() {
             ['ok', '可用'],
             ['unknown', '待检测'],
             ['error', '异常'],
+            ['unavailable', '上游离线'],
             ['missing', '上游已删'],
           ].map(([k, label]) => (
             <button key={k} onClick={() => setStatusFilter(k)} className={clsx(statusFilter === k && 'on')}>
@@ -177,6 +181,12 @@ export default function Accounts() {
           </span>
         )}
       </div>
+
+      {!upstreamUp && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12.5px] text-amber-800">
+          Muse2API 上游暂时无法连接。账号状态尚未核实，请先启动本地上游服务后刷新，避免把连接故障误认为账号已删除。
+        </div>
+      )}
 
       {/* 列表 */}
       {loading && !list.length ? (
@@ -491,7 +501,7 @@ function BindDrawer({ open, onClose, onDone }) {
               解压后在 <code className="rounded bg-white px-1 text-[#171a24]">chrome://extensions</code> 打开「开发者模式」，再加载已解压的扩展程序。支持 Chrome 和 Edge。
             </div>
           </div>
-          <a href="/download/museapi-video-extension.zip" download className="mt-3 block">
+          <a href="/download/mua-account-binding.zip" download className="mt-3 block">
             <Button variant="outline" className="w-full">
               立即下载 <ExternalLink size={13} />
             </Button>

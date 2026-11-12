@@ -11,6 +11,20 @@ import * as muse from '../muse.js';
 
 const r = Router();
 
+function resolveWorkspace(req) {
+  const projectId = typeof req.body?.projectId === 'string' ? req.body.projectId : null;
+  const canvasId = typeof req.body?.canvasId === 'string' ? req.body.canvasId : null;
+  if (canvasId) {
+    const canvas = db.prepare('SELECT id,project_id FROM canvases WHERE id = ? AND user_id = ?').get(canvasId, req.user.id);
+    if (!canvas || (projectId && projectId !== canvas.project_id)) return { error: '画布不存在或无权使用' };
+    return { projectId: canvas.project_id, canvasId: canvas.id };
+  }
+  if (projectId && !db.prepare('SELECT id FROM projects WHERE id = ? AND user_id = ?').get(projectId, req.user.id)) {
+    return { error: '项目不存在或无权使用' };
+  }
+  return { projectId, canvasId: null };
+}
+
 const UPLOAD_DIR = path.join(CFG.dataDir, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -84,10 +98,12 @@ r.post('/upload', requireAuth, upload.array('files', 10), (req, res) => {
 
 /* ------------------------------ 视频 ------------------------------ */
 r.post('/videos', requireAuth, async (req, res) => {
-  const { prompt, duration = 5, size = '16:9', images = [], model = 'muse-video', extra = null, projectId = null } = req.body || {};
+  const { prompt, duration = 5, size = '16:9', images = [], model = 'muse-video', extra = null } = req.body || {};
   if (!prompt || String(prompt).trim().length < 2) {
     return res.status(400).json({ error: '请填写画面描述' });
   }
+  const workspace = resolveWorkspace(req);
+  if (workspace.error) return res.status(404).json({ error: workspace.error });
   const dur = CFG.videoDurations.includes(Number(duration)) ? Number(duration) : 5;
   const params = { duration: dur, size: CFG.videoSizes.includes(size) ? size : '16:9', images, extra };
   const cost = priceOf('video', params);
@@ -98,7 +114,7 @@ r.post('/videos', requireAuth, async (req, res) => {
   }
 
   const job = createJob(req.user.id, 'video', String(prompt).trim(), params, cost);
-  updateJob(job.id, { project_id: typeof projectId === 'string' ? projectId.slice(0, 100) : null });
+  updateJob(job.id, { project_id: workspace.projectId, canvas_id: workspace.canvasId });
   addCredits(req.user.id, -cost, '创建视频任务', job.id);
 
   try {
@@ -127,10 +143,12 @@ r.post('/videos', requireAuth, async (req, res) => {
 
 /* ------------------------------ 图片 ------------------------------ */
 r.post('/images', requireAuth, async (req, res) => {
-  const { prompt, size = '1:1', images = [], projectId = null } = req.body || {};
+  const { prompt, size = '1:1', images = [] } = req.body || {};
   if (!prompt || String(prompt).trim().length < 2) {
     return res.status(400).json({ error: '请填写提示词' });
   }
+  const workspace = resolveWorkspace(req);
+  if (workspace.error) return res.status(404).json({ error: workspace.error });
   const params = { size: CFG.imageSizes.includes(size) ? size : '1:1', images };
   const cost = priceOf('image', params);
 
@@ -140,7 +158,7 @@ r.post('/images', requireAuth, async (req, res) => {
   }
 
   const job = createJob(req.user.id, 'image', String(prompt).trim(), params, cost);
-  updateJob(job.id, { project_id: typeof projectId === 'string' ? projectId.slice(0, 100) : null });
+  updateJob(job.id, { project_id: workspace.projectId, canvas_id: workspace.canvasId });
   addCredits(req.user.id, -cost, '创建图片任务', job.id);
 
   try {
@@ -169,6 +187,8 @@ r.get('/jobs', requireAuth, (req, res) => {
     userId: req.user.role === 'admin' && req.query.all === '1' ? null : req.user.id,
     type: req.query.type || null,
     status: req.query.status || null,
+    projectId: req.query.projectId || null,
+    canvasId: req.query.canvasId || null,
     page,
     pageSize,
   });

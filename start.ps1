@@ -85,7 +85,17 @@ if (Test-Port 18610) {
   Write-Host "[4/4] 上游 muse2api 已在运行 (18610)" -ForegroundColor DarkGray
 } else {
   Write-Host "[4/4] 启动上游 muse2api (18610)…" -ForegroundColor Yellow
-  $ok = Start-Detached $pyExe "-m uvicorn app:app --host 127.0.0.1 --port 18610" $upstream (Join-Path $upstream 'server.log')
+  # 固定上游配置目录，并清除可能冲突的旧密钥环境变量，让服务读取本项目 .env。
+  $previousMuseHome = $env:MUSE2API_HOME
+  $previousMuseKey = $env:MUSE2API_KEY
+  $env:MUSE2API_HOME = $upstream
+  Remove-Item Env:MUSE2API_KEY -ErrorAction SilentlyContinue
+  try {
+    $ok = Start-Detached $pyExe "-m uvicorn app:app --host 127.0.0.1 --port 18610" $upstream (Join-Path $upstream 'server.log')
+  } finally {
+    if ($null -eq $previousMuseHome) { Remove-Item Env:MUSE2API_HOME -ErrorAction SilentlyContinue } else { $env:MUSE2API_HOME = $previousMuseHome }
+    if ($null -eq $previousMuseKey) { Remove-Item Env:MUSE2API_KEY -ErrorAction SilentlyContinue } else { $env:MUSE2API_KEY = $previousMuseKey }
+  }
   if ($ok -and (Wait-Http 'http://127.0.0.1:18610/healthz' 45)) {
     Write-Host "  上游就绪" -ForegroundColor Green
   } else {
@@ -120,13 +130,13 @@ if ($Dev) {
 }
 
 # 扩展包（一键绑定用；缺了就补一份）
-$zip = Join-Path $server 'public\museapi-video-extension.zip'
+$zip = Join-Path $server 'public\mua-account-binding.zip'
 if (-not (Test-Path $zip)) {
   $extSrc = Join-Path $root 'extension'
   if (Test-Path $extSrc) {
     New-Item -ItemType Directory -Force -Path (Join-Path $server 'public') | Out-Null
     Compress-Archive -Path (Join-Path $extSrc '*') -DestinationPath $zip -CompressionLevel Optimal
-    Write-Host "已打包浏览器扩展 → server\public\museapi-video-extension.zip" -ForegroundColor DarkGray
+    Write-Host "已打包浏览器扩展 → server\public\mua-account-binding.zip" -ForegroundColor DarkGray
   }
 }
 

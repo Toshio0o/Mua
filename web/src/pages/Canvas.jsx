@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
-  Type, Image as ImageIcon, Video, Trash2, ZoomIn, ZoomOut, Maximize, Loader2, Sparkles,
-  MousePointer2, Hand, ChevronDown, Map as MapIcon, Expand, Upload, Send,
+  ArrowLeft, Type, Image as ImageIcon, Video, Trash2, ZoomIn, ZoomOut, Maximize, Loader2, Sparkles,
+  MousePointer2, ChevronDown, Map as MapIcon, Expand, Upload, Send,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { api } from '../lib/api.js';
 import { useAuth } from '../store/auth.jsx';
 import { useToast } from '../components/ui.jsx';
-
-const STORE_KEY = 'xm_canvas_v1';
 
 const NODE_W = 260;
 const NODE_H = 170;
@@ -122,16 +121,14 @@ function bezier(x1, y1, x2, y2) {
 }
 
 export default function Canvas() {
+  const { canvasId } = useParams();
+  const nav = useNavigate();
   const { user, refresh } = useAuth();
   const toast = useToast();
 
-  const [doc, setDoc] = useState(() => {
-    try {
-      const raw = localStorage.getItem(STORE_KEY);
-      if (raw) return JSON.parse(raw);
-    } catch { /* ignore */ }
-    return defaultDoc();
-  });
+  const [doc, setDoc] = useState(defaultDoc);
+  const [canvasInfo, setCanvasInfo] = useState(null);
+  const [canvasLoaded, setCanvasLoaded] = useState(false);
 
   const [view, setView] = useState({ x: 0, y: 0, z: 1 });
   const [selected, setSelected] = useState([]);
@@ -139,40 +136,73 @@ export default function Canvas() {
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [saved, setSaved] = useState(true);
+  const [saveError, setSaveError] = useState(false);
   const [price, setPrice] = useState({ videoBase: 10, videoPerSecond: 2, image: 5 });
-  const [tool, setTool] = useState('select');
   const [vpSize, setVpSize] = useState({ w: 800, h: 500 });
   const [draft, setDraft] = useState(null);
   const [menu, setMenu] = useState(null);
+  const [selectionRect, setSelectionRect] = useState(null);
+  const [canvasGesture, setCanvasGesture] = useState('idle');
+  const clipboardKey = `mua_canvas_clipboard_${user?.id || user?.email || 'account'}`;
 
   const viewportRef = useRef(null);
   const dragRef = useRef(null);
-  const bootRef = useRef(false);
   const viewRef = useRef(view);
+  const docRef = useRef(doc);
   const fileRef = useRef(null);
   const uploadTarget = useRef(null);
   const uploadPoint = useRef(null);
   const hoverRef = useRef(null);
   viewRef.current = view;
+  docRef.current = doc;
 
   useEffect(() => {
-    if (bootRef.current) return;
-    bootRef.current = true;
-    if (doc.nodes.length) setSelected([doc.nodes[0].id]);
-  }, [doc.nodes]);
+    let active = true;
+    setCanvasLoaded(false);
+    setCanvasInfo(null);
+    setSelected([]);
+    setSelectedLink(null);
+    const loadCanvas = canvasId === 'scratch'
+      ? api.scratchProject().then(({ project }) => api.canvas(project.canvases[0].id))
+      : api.canvas(canvasId);
+    loadCanvas.then(({ canvas }) => {
+      if (!active) return;
+      const document = canvas.document;
+      const loadedDoc = Array.isArray(document?.nodes) && Array.isArray(document?.links)
+        ? document
+        : defaultDoc();
+      if (!loadedDoc.nodes.length) loadedDoc.nodes = defaultDoc().nodes;
+      setDoc(loadedDoc);
+      setView(document?.view && Number.isFinite(document.view.z) ? document.view : { x: 0, y: 0, z: 1 });
+      setCanvasInfo(canvas);
+      setSelected(loadedDoc.nodes.length ? [loadedDoc.nodes[0].id] : []);
+      setCanvasLoaded(true);
+    }).catch((error) => {
+      if (!active) return;
+      toast(error.message, 'error');
+      nav('/projects', { replace: true });
+    });
+    return () => { active = false; };
+  }, [canvasId, nav, toast]);
 
   useEffect(() => {
     api.meta().then((m) => { if (m?.price) setPrice(m.price); }).catch(() => {});
   }, []);
 
   useEffect(() => {
+    if (!canvasLoaded) return undefined;
     setSaved(false);
+    setSaveError(false);
     const t = setTimeout(() => {
-      localStorage.setItem(STORE_KEY, JSON.stringify(doc));
-      setSaved(true);
+      api.saveCanvas(canvasInfo.id, { document: { ...doc, view } })
+        .then(() => setSaved(true))
+        .catch((error) => {
+          setSaveError(true);
+          toast(`画布保存失败：${error.message}`, 'error');
+        });
     }, 400);
     return () => clearTimeout(t);
-  }, [doc]);
+  }, [canvasId, canvasInfo, canvasLoaded, doc, view, toast]);
 
   const screenToCanvas = (clientX, clientY) => {
     const rect = viewportRef.current?.getBoundingClientRect();
@@ -198,31 +228,68 @@ export default function Canvas() {
 
   const onWheel = (e) => {
     e.preventDefault();
-    const rect = viewportRef.current?.getBoundingClientRect();
-    const cx = rect ? e.clientX - rect.left : undefined;
-    const cy = rect ? e.clientY - rect.top : undefined;
-    zoomBy(e.deltaY < 0 ? 1.08 : 1 / 1.08, cx, cy);
+    if (e.ctrlKey) {
+      const rect = viewportRef.current?.getBoundingClientRect();
+      const cx = rect ? e.clientX - rect.left : undefined;
+      const cy = rect ? e.clientY - rect.top : undefined;
+      zoomBy(Math.exp(-e.deltaY * 0.002), cx, cy);
+      return;
+    }
+    setView((current) => ({ ...current, y: current.y - e.deltaY }));
   };
 
+  useEffect(() => {
+    const handleWheel = (event) => {
+      const viewport = viewportRef.current;
+      if (!viewport || !viewport.contains(event.target)) return;
+      onWheel(event);
+      event.stopPropagation();
+    };
+    window.addEventListener('wheel', handleWheel, { capture: true, passive: false });
+    return () => window.removeEventListener('wheel', handleWheel, true);
+  }, []);
+
   const onBackgroundDown = (e) => {
-    if (e.button === 2 || e.detail > 1) return;
-    const isMiddle = e.button === 1;
-    const isSpace = e.getModifierState?.(' ') || false;
-    if (tool !== 'hand' && !isMiddle && !isSpace && e.target !== e.currentTarget && !e.target.dataset.canvasbg) return;
-    setSelected([]);
+    if (e.button === 2) return;
+    if (e.button === 1) {
+      e.preventDefault();
+      setCanvasGesture('pan');
+      setMenu(null);
+      dragRef.current = {
+        mode: 'pan',
+        startX: e.clientX,
+        startY: e.clientY,
+        ox: viewRef.current.x,
+        oy: viewRef.current.y,
+      };
+      return;
+    }
+    if (e.button !== 0 || e.detail > 1 || (e.target !== e.currentTarget && !e.target.dataset.canvasbg)) return;
+    const rect = viewportRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const baseSelection = e.shiftKey ? selected : [];
+    setCanvasGesture('select');
+    setSelectionRect({ x1: x, y1: y, x2: x, y2: y });
+    setSelected(baseSelection);
     setSelectedLink(null);
     setMenu(null);
-    dragRef.current = {
-      mode: 'pan',
-      startX: e.clientX,
-      startY: e.clientY,
-      ox: view.x,
-      oy: view.y,
-    };
+    dragRef.current = { mode: 'marquee', startX: x, startY: y, baseSelection };
   };
 
   const onNodeDown = (e, node) => {
-    if (tool === 'hand' || e.button !== 0) return;
+    if (e.button === 2) {
+      e.preventDefault();
+      e.stopPropagation();
+      setSelected((current) => e.shiftKey
+        ? (current.includes(node.id) ? current.filter((id) => id !== node.id) : [...current, node.id])
+        : [node.id]);
+      setSelectedLink(null);
+      setMenu(null);
+      return;
+    }
+    if (e.button !== 0) return;
     if (e.target.closest('[data-port], textarea, button, input, select')) return;
     e.stopPropagation();
     const multi = e.shiftKey;
@@ -309,6 +376,29 @@ export default function Canvas() {
         setView((v) => ({ ...v, x: d.ox + (e.clientX - d.startX), y: d.oy + (e.clientY - d.startY) }));
         return;
       }
+      if (d.mode === 'marquee') {
+        const rect = viewportRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const bounds = {
+          left: Math.min(d.startX, x),
+          top: Math.min(d.startY, y),
+          right: Math.max(d.startX, x),
+          bottom: Math.max(d.startY, y),
+        };
+        setSelectionRect({ x1: d.startX, y1: d.startY, x2: x, y2: y });
+        const v = viewRef.current;
+        const hits = docRef.current.nodes.filter((node) => {
+          const left = v.x + node.x * v.z;
+          const top = v.y + node.y * v.z;
+          const right = left + nodeW(node) * v.z;
+          const bottom = top + nodeH(node) * v.z;
+          return left <= bounds.right && right >= bounds.left && top <= bounds.bottom && bottom >= bounds.top;
+        }).map((node) => node.id);
+        setSelected([...new Set([...d.baseSelection, ...hits])]);
+        return;
+      }
       if (d.mode === 'link') {
         const p = toCanvas(e.clientX, e.clientY);
         setDraft({ from: d.from, side: d.side, x: p.x, y: p.y });
@@ -342,6 +432,8 @@ export default function Canvas() {
       const d = dragRef.current;
       dragRef.current = null;
       if (d?.mode === 'link') finishLink(e, d);
+      if (d?.mode === 'marquee') setSelectionRect(null);
+      setCanvasGesture('idle');
       setDraft(null);
     };
     window.addEventListener('mousemove', onMove);
@@ -356,6 +448,20 @@ export default function Canvas() {
     const onKey = (e) => {
       const tag = document.activeElement?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'c') {
+        const nodes = doc.nodes.filter((node) => selected.includes(node.id));
+        if (!nodes.length) return;
+        e.preventDefault();
+        const ids = new Set(nodes.map((node) => node.id));
+        const links = (doc.links || []).filter((link) => ids.has(link.from) && ids.has(link.to));
+        try {
+          localStorage.setItem(clipboardKey, JSON.stringify({ version: 1, nodes, links }));
+          toast(`已复制 ${nodes.length} 个节点，可切换画布粘贴`, 'ok');
+        } catch {
+          toast('复制失败，浏览器本地存储空间不足', 'error');
+        }
+        return;
+      }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selectedLink && !selected.length) {
@@ -373,17 +479,16 @@ export default function Canvas() {
         setSelected([]);
         setSelectedLink(null);
       }
-      if (e.key === 'v' || e.key === 'V') setTool('select');
-      if (e.key === 'h' || e.key === 'H') setTool('hand');
       if (e.key === 'Escape') {
         setSelected([]);
         setSelectedLink(null);
         setMenu(null);
+        setSelectionRect(null);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selected, selectedLink]);
+  }, [selected, selectedLink, doc, clipboardKey, toast]);
 
   const centerPoint = () => {
     const rect = viewportRef.current?.getBoundingClientRect();
@@ -391,6 +496,37 @@ export default function Canvas() {
       (rect?.left ?? 0) + (viewportRef.current?.clientWidth ?? 400) / 2,
       (rect?.top ?? 0) + (viewportRef.current?.clientHeight ?? 300) / 2
     );
+  };
+
+  const pasteCopiedNodes = () => {
+    let copied;
+    try { copied = JSON.parse(localStorage.getItem(clipboardKey) || 'null'); } catch { copied = null; }
+    if (!Array.isArray(copied?.nodes) || !copied.nodes.length) return false;
+    const idMap = new Map(copied.nodes.map((node) => [node.id, newId()]));
+    const bounds = copied.nodes.reduce((box, node) => ({
+      minX: Math.min(box.minX, node.x || 0),
+      minY: Math.min(box.minY, node.y || 0),
+      maxX: Math.max(box.maxX, (node.x || 0) + nodeW(node)),
+      maxY: Math.max(box.maxY, (node.y || 0) + nodeH(node)),
+    }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+    const center = centerPoint();
+    const offsetX = center.x - (bounds.maxX - bounds.minX) / 2 - bounds.minX;
+    const offsetY = center.y - (bounds.maxY - bounds.minY) / 2 - bounds.minY;
+    const nodes = copied.nodes.map((node) => ({
+      ...node,
+      id: idMap.get(node.id),
+      x: Math.round((node.x || 0) + offsetX),
+      y: Math.round((node.y || 0) + offsetY),
+    }));
+    const links = (copied.links || [])
+      .filter((link) => idMap.has(link.from) && idMap.has(link.to))
+      .map((link) => ({ ...link, from: idMap.get(link.from), to: idMap.get(link.to) }));
+    setDoc((current) => ({ ...current, nodes: [...current.nodes, ...nodes], links: [...(current.links || []), ...links] }));
+    setSelected(nodes.map((node) => node.id));
+    setSelectedLink(null);
+    setMenu(null);
+    toast(`已粘贴 ${nodes.length} 个节点`, 'ok');
+    return true;
   };
 
   const addNode = (type, extra = {}, point) => {
@@ -533,9 +669,12 @@ export default function Canvas() {
       const tag = document.activeElement?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.activeElement?.isContentEditable) return;
       const files = mediaFilesFromClipboard(e.clipboardData);
-      if (!files.length) return;
-      e.preventDefault();
-      uploadMedia(files, hoverRef.current || centerPoint(), null);
+      if (files.length) {
+        e.preventDefault();
+        uploadMedia(files, hoverRef.current || centerPoint(), null);
+        return;
+      }
+      if (pasteCopiedNodes()) e.preventDefault();
     };
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
@@ -564,7 +703,13 @@ export default function Canvas() {
 
     setBusy(true);
     try {
-      const body = { prompt: finalPrompt, size, images: images.slice(0, 3) };
+      const body = {
+        prompt: finalPrompt,
+        size,
+        images: images.slice(0, 3),
+        projectId: canvasInfo.projectId,
+        canvasId: canvasInfo.id,
+      };
       const { job } = mode === 'image'
         ? await api.createImage(body)
         : await api.createVideo({ ...body, duration });
@@ -658,19 +803,41 @@ export default function Canvas() {
       : bezier(p.x, p.y, draft.x, draft.y);
   })();
 
+  if (!canvasLoaded || !canvasInfo) {
+    return <div className="grid h-full min-h-64 place-items-center"><Loader2 size={24} className="animate-spin text-brand-500" /></div>;
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="frost sticky top-0 z-30 flex shrink-0 items-center justify-between gap-4 border-b border-[#e6eaf2] px-7 py-4">
-        <div>
+        <div className="flex min-w-0 items-start gap-3">
+          <button
+            type="button"
+            onClick={() => nav(canvasInfo.isScratch ? '/scratch' : `/projects/${canvasInfo.projectId}`)}
+            className="mt-1 inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-[#e6eaf2] bg-white px-3 text-[12px] font-medium text-[#3c4458] transition hover:border-brand-400/40 hover:text-brand-500"
+          >
+            <ArrowLeft size={14} /> 返回{canvasInfo.isScratch ? '画布列表' : '项目'}
+          </button>
+          <div className="min-w-0">
+          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-mist-400">
+            {canvasInfo.isScratch ? (
+              <button onClick={() => nav('/scratch')} className="transition hover:text-brand-500">Mua 画布</button>
+            ) : (
+              <button onClick={() => nav(`/projects/${canvasInfo.projectId}`)} className="transition hover:text-brand-500">{canvasInfo.projectName}</button>
+            )}
+            <span>/</span>
+            <span>{canvasInfo.name}</span>
+          </div>
           <h1 className="flex items-center gap-2 text-[22px] font-semibold tracking-tight text-[#171a24]">
-            Mua 画布
+            {canvasInfo.name}
             <span className="h-2 w-2 rounded-full bg-brand-400 shadow-[0_0_10px_rgba(91,108,255,.65)]" />
           </h1>
-          <p className="mt-1 text-[12.5px] text-mist-400">滚轮缩放，拖动空白处平移；双击新建节点，Ctrl+V 或拖入图片和视频</p>
+          <p className="mt-1 text-[12.5px] text-mist-400">左键选择或框选，中键拖动画布，Ctrl+滚轮缩放，普通滚轮上下移动</p>
+          </div>
         </div>
         <span className="flex items-center gap-1.5 text-[11.5px] text-mist-400">
-          <span className={clsx('h-1.5 w-1.5 rounded-full', saved ? 'bg-brand-400' : 'bg-mist-400')} />
-          {saved ? '已自动保存' : '保存中'}
+          <span className={clsx('h-1.5 w-1.5 rounded-full', saveError ? 'bg-rose-400' : saved ? 'bg-brand-400' : 'bg-mist-400')} />
+          {saveError ? '保存失败' : saved ? '已自动保存' : '保存中'}
         </span>
       </div>
 
@@ -678,7 +845,6 @@ export default function Canvas() {
         <div
           ref={viewportRef}
           data-canvasbg="1"
-          onWheel={onWheel}
           onMouseDown={onBackgroundDown}
           onDoubleClick={openMenuAt}
           onMouseMove={(e) => { hoverRef.current = screenToCanvas(e.clientX, e.clientY); }}
@@ -694,7 +860,7 @@ export default function Canvas() {
             }
           }}
           onContextMenu={(e) => e.preventDefault()}
-          className={clsx('dot-grid absolute inset-0 select-none', tool === 'hand' || draft ? 'cursor-grab' : 'cursor-default')}
+          className={clsx('dot-grid absolute inset-0 select-none', canvasGesture === 'pan' ? 'cursor-grabbing' : canvasGesture === 'select' ? 'cursor-crosshair' : 'cursor-default')}
           style={{
             backgroundSize: `${22 * view.z}px ${22 * view.z}px`,
             backgroundPosition: `${view.x}px ${view.y}px`,
@@ -728,6 +894,8 @@ export default function Canvas() {
                       strokeWidth="14"
                       className="pointer-events-auto cursor-pointer"
                       onMouseDown={(e) => {
+                        if (e.button === 1) return;
+                        if (e.button !== 0) return;
                         e.stopPropagation();
                         setSelected([]);
                         setSelectedLink(l);
@@ -773,11 +941,21 @@ export default function Canvas() {
               />
             ))}
           </div>
+          {selectionRect && (
+            <div
+              className="pointer-events-none absolute z-10 border border-brand-500 bg-brand-500/10"
+              style={{
+                left: Math.min(selectionRect.x1, selectionRect.x2),
+                top: Math.min(selectionRect.y1, selectionRect.y2),
+                width: Math.abs(selectionRect.x2 - selectionRect.x1),
+                height: Math.abs(selectionRect.y2 - selectionRect.y1),
+              }}
+            />
+          )}
         </div>
 
         <div className="frost absolute left-4 top-4 z-20 flex items-center gap-1 rounded-full border border-white p-1.5 shadow-lg">
-          <ToolBtn icon={MousePointer2} active={tool === 'select'} onClick={() => setTool('select')} title="选择 (V)" />
-          <ToolBtn icon={Hand} active={tool === 'hand'} onClick={() => setTool('hand')} title="抓手 (H)" />
+          <span title="左键选择，拖动空白处框选" className="grid h-9 w-9 place-items-center rounded-xl bg-brand-500/10 text-brand-500"><MousePointer2 size={16} /></span>
           <Sep />
           <ToolBtn icon={Type} onClick={() => addNode('text')} title="文本输入节点" />
           <ToolBtn icon={Upload} onClick={() => openPicker('image/*', centerPoint(), null)} title="上传图片节点" />

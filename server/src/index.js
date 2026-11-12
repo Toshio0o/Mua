@@ -16,6 +16,7 @@ import v1Routes from './routes/v1.js';
 import queueRoutes from './routes/queue.js';
 import teamRoutes from './routes/team.js';
 import chatRoutes from './routes/chat.js';
+import projectRoutes from './routes/projects.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -38,6 +39,7 @@ app.use((req, res, next) => {
 /* ------------------------------ 静态资源 ------------------------------ */
 app.use('/media', express.static(MEDIA_DIR, { maxAge: '7d', fallthrough: true }));
 app.use('/uploads', express.static(path.join(CFG.dataDir, 'uploads'), { maxAge: '1d', fallthrough: true }));
+app.get('/download/museapi-video-extension.zip', (_req, res) => res.redirect(301, '/download/mua-account-binding.zip'));
 // 浏览器扩展打包下载（scripts/build-extension.ps1 生成）
 app.use('/download', express.static(path.join(ROOT, 'public'), { fallthrough: true }));
 
@@ -61,6 +63,7 @@ app.use('/api', forumRoutes);
 app.use('/api', queueRoutes);
 app.use('/api', teamRoutes);
 app.use('/api', chatRoutes);
+app.use('/api/projects', projectRoutes);
 app.use('/api', genRoutes);
 
 // OpenAI 兼容对外接口（用 sk- 密钥鉴权，转发到上游）

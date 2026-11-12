@@ -36,6 +36,17 @@ export const api = {
   updateMe: (b) => request('/api/auth/me', { method: 'PATCH', body: b }),
   ledger: () => request('/api/auth/ledger'),
 
+  bootstrapProjects: (b) => request('/api/projects/bootstrap', { method: 'POST', body: b }),
+  projects: () => request('/api/projects'),
+  scratchProject: () => request('/api/projects/scratch'),
+  createProject: (b) => request('/api/projects', { method: 'POST', body: b }),
+  renameProject: (id, b) => request(`/api/projects/${encodeURIComponent(id)}`, { method: 'PATCH', body: b }),
+  deleteProject: (id) => request(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  createCanvas: (projectId, b) => request(`/api/projects/${encodeURIComponent(projectId)}/canvases`, { method: 'POST', body: b }),
+  canvas: (id) => request(`/api/projects/canvases/${encodeURIComponent(id)}`),
+  saveCanvas: (id, b) => request(`/api/projects/canvases/${encodeURIComponent(id)}`, { method: 'PATCH', body: b }),
+  deleteCanvas: (id) => request(`/api/projects/canvases/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
   meta: () => request('/api/meta'),
 
   accounts: () => request('/api/accounts'),

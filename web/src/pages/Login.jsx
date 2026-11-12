@@ -51,10 +51,12 @@ export default function Login() {
       <div className="relative grid w-full max-w-[1000px] gap-10 lg:grid-cols-[minmax(0,1fr)_400px] lg:items-center">
         {/* ---------------- 左：品牌 ---------------- */}
         <div className="hidden lg:block">
-          <div className="flex items-baseline gap-1">
-            <span className="font-display text-[36px] font-extrabold italic leading-none tracking-tight text-[#171a24]">Muse</span>
-            <span className="font-display text-[36px] font-extrabold leading-none tracking-tighter brand-text">API</span>
-            <span className="mb-3 text-[13px] font-semibold uppercase tracking-[0.1em] text-brand-400">-Video</span>
+          <div className="flex items-center gap-4">
+            <img src="/brand/mua-mascot.webp" alt="Mua 吉祥物" draggable="false" className="h-[88px] w-[88px] rounded-[26px] border border-white bg-white object-cover shadow-[0_14px_32px_-20px_rgba(30,40,80,.45)]" />
+            <div>
+              <div className="font-display text-[38px] font-extrabold leading-none tracking-tight brand-text">Mua</div>
+              <p className="mt-2 font-mono text-[10px] tracking-[0.18em] text-ink-500">AI CREATIVE STUDIO</p>
+            </div>
           </div>
 
           <h1 className="mt-6 text-[30px] font-semibold leading-tight tracking-tight text-[#171a24]">
@@ -80,17 +82,16 @@ export default function Login() {
           </div>
 
           <p className="mt-8 font-mono text-[10px] tracking-[0.2em] text-ink-500">
-            MUSE.AI · ACCOUNT POOL · VIDEO GENERATION
+            MUA · IMAGE AND VIDEO CREATION
           </p>
         </div>
 
         {/* ---------------- 右：表单 ---------------- */}
         <div className="w-full">
           {/* 移动端 logo */}
-          <div className="mb-7 flex items-baseline justify-center gap-1 lg:hidden">
-            <span className="font-display text-[24px] font-extrabold italic text-[#171a24]">Muse</span>
-            <span className="font-display text-[24px] font-extrabold brand-text">API</span>
-            <span className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-brand-400">-Video</span>
+          <div className="mb-7 flex items-center justify-center gap-2.5 lg:hidden">
+            <img src="/brand/mua-icon.png" alt="" draggable="false" className="h-10 w-10 rounded-xl border border-white bg-white object-cover shadow-sm" />
+            <span className="font-display text-[25px] font-extrabold brand-text">Mua</span>
           </div>
 
           <div className="frost rounded-2xl border border-white p-6 shadow-[0_24px_60px_-36px_rgba(55,65,120,.55)]">

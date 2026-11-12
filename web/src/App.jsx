@@ -3,7 +3,8 @@ import { useAuth } from './store/auth.jsx';
 import { ToastProvider, Spinner } from './components/ui.jsx';
 import Layout from './components/Layout.jsx';
 import Login from './pages/Login.jsx';
-import Create from './pages/Create.jsx';
+import Projects from './pages/Projects.jsx';
+import ProjectDetail from './pages/ProjectDetail.jsx';
 import Canvas from './pages/Canvas.jsx';
 import Accounts from './pages/Accounts.jsx';
 import Bind from './pages/Bind.jsx';
@@ -20,7 +21,7 @@ function Guard({ children }) {
 }
 
 /**
- * 只保留三个功能：快捷创作 / 无限画布 / muse 账号导入。
+ * 只保留两个入口：项目管理 / muse 账号导入。
  * 其余页面（首页、论坛、价目表、会员、邀请、团队、API 平台、设置、历史）已下线，
  * 源码文件仍保留在 web/src/pages 下，需要时可重新接回路由。
  */
@@ -32,7 +33,7 @@ export default function App() {
       <Routes>
         <Route
           path="/login"
-          element={loading ? <Boot /> : user ? <Navigate to="/create" replace /> : <Login />}
+          element={loading ? <Boot /> : user ? <Navigate to="/projects" replace /> : <Login />}
         />
         <Route
           path="/bind/:code"
@@ -50,12 +51,17 @@ export default function App() {
             </Guard>
           }
         >
-          <Route path="/create" element={<Create />} />
-          <Route path="/canvas" element={<Canvas />} />
+          <Route path="/projects" element={<Projects />} />
+          <Route path="/projects/:projectId" element={<ProjectDetail />} />
+          <Route path="/scratch" element={<ProjectDetail scratch />} />
+          <Route path="/scratch/canvas/:canvasId" element={<Canvas />} />
+          <Route path="/canvas/:canvasId" element={<Canvas />} />
+          <Route path="/canvas" element={<Navigate to="/scratch" replace />} />
+          <Route path="/create" element={<Navigate to="/projects" replace />} />
           <Route path="/accounts" element={<Accounts />} />
         </Route>
 
-        <Route path="*" element={<Navigate to={user ? '/create' : '/login'} replace />} />
+        <Route path="*" element={<Navigate to={user ? '/projects' : '/login'} replace />} />
       </Routes>
     </ToastProvider>
   );
