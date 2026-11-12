@@ -8,7 +8,7 @@ export const ROOT = path.resolve(__dirname, '..');
 const num = (v, d) => (v === undefined || v === '' || Number.isNaN(Number(v)) ? d : Number(v));
 
 export const CFG = {
-  appVersion: '1.2.9',
+  appVersion: '1.2.10',
   port: num(process.env.PORT, 8787),
   host: process.env.HOST || '127.0.0.1',
 

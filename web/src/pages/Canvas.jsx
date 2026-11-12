@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  ArrowLeft, Type, Image as ImageIcon, Video, Trash2, ZoomIn, ZoomOut, Maximize, Loader2, Sparkles,
+  ArrowLeft, Type, Image as ImageIcon, Video, Download, Trash2, ZoomIn, ZoomOut, Maximize, Loader2, Sparkles,
   MousePointer2, ChevronDown, Map as MapIcon, Expand, Upload, Send,
 } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -1119,6 +1119,8 @@ function CanvasNode({ node, active, price, busy, onMouseDown, onPortDown, onResi
   const title = node.label || (isText ? '文本提示词' : node.type === 'image' ? '图片' : '视频');
   const role = isText ? '输入' : canSend ? '生成' : '素材';
   const fileName = node.mediaUrl ? decodeURIComponent(node.mediaUrl.split('/').pop().split('?')[0]) : null;
+  const mediaExtension = node.mediaUrl?.split(/[?#]/)[0].match(/\.(png|jpe?g|webp|gif|mp4|webm|mov)$/i)?.[0];
+  const downloadName = `Mua-${isText ? '素材' : node.type === 'video' ? '视频' : '图片'}${mediaExtension || (node.type === 'video' ? '.mp4' : '.png')}`;
   const box = previewBox(node);
   const rememberMedia = (el) => {
     const width = el?.videoWidth || el?.naturalWidth;
@@ -1210,6 +1212,19 @@ function CanvasNode({ node, active, price, busy, onMouseDown, onPortDown, onResi
                 <span className="text-[11.5px] text-mist-400">等待素材</span>
               )}
             </div>
+          )}
+          {node.mediaUrl && (
+            <a
+              href={node.mediaUrl}
+              download={downloadName}
+              aria-label={`下载${node.type === 'video' ? '视频' : '图片'}`}
+              title="下载"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              className="absolute right-2 top-2 z-10 inline-flex items-center gap-1.5 rounded-lg border border-white/70 bg-white/95 px-2.5 py-1.5 text-[11px] font-medium text-[#343b50] shadow-sm transition hover:border-brand-300 hover:text-brand-600"
+            >
+              <Download size={13} /> 下载
+            </a>
           )}
         </div>
         </>
